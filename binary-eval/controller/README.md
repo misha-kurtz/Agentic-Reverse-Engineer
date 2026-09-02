@@ -1,6 +1,6 @@
 
 
-``` bash
+``` console
 Host Controller
       │
       │ presigned URL
