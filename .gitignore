@@ -1,0 +1,6 @@
+# Directories
+**/binaries
+__pycache__/
+
+# Files
+**/*.py[cod]

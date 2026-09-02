@@ -1,14 +1,14 @@
 ``` bash
 binary-eval/
 │
-├── controller/     # Ex. Should I invoke the UPX recovery workflow?
+├── controller/  #Ex. Should I invoke the UPX recovery workflow?
 │   ├── __init__.py
 │   ├── controller.py
 │   ├── state.py
 │   ├── policy.py
 │   └── decisions.py
 │
-├── runners/         # Ex. How can I execute capa?
+├── runners/    #Ex. How can I execute capa, FLOSS, Ghidra, etc?
 │   ├── base.py
 │   ├── vmware.py
 │   ├── ghidra.py
@@ -21,7 +21,7 @@ binary-eval/
 │   ├── wireshark.py
 │   └── x64dbg.py
 │
-├── workflows/        # Ex. What sequence of ops constitutes UPX recovery
+├── workflows/ #Ex. What sequence of ops constitutes UPX recovery
 │   ├── static_analysis.py
 │   ├── dynamic_analysis.py
 │   ├── upx_recovery.py
