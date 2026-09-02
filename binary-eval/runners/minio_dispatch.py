@@ -7,17 +7,19 @@ class MinioDispatchRunner:
     def __init__(self, datapool_vm: VMwareRunner):
         self.datapool_vm = datapool_vm
 
+    # Generate a presigned URL for downloading a sample from Minio
     def generate_presigned_url(
-        self,
-        sample_id: str,
-        sha256: str,
-        host_temp_path: Path,
+    self,
+    sample_id: str,
+    sha256: str,
+    sample_variant: str,
+    host_temp_path: Path,
     ) -> str:
 
         object_path = (
             f"datapool-dispatch/"
             f"samples-staging/"
-            f"{sample_id}/original/"
+            f"{sample_id}/{sample_variant}/"
             f"{sha256}/sample.bin"
         )
 
@@ -25,7 +27,7 @@ class MinioDispatchRunner:
 
         command = (
             f'mc share download --expire 5m "{object_path}" '
-            "| grep -Eo \"https?://[^[:space:]]+\" "
+            '| grep -Eo "https?://[^[:space:]]+X-Amz-[^[:space:]]+" '
             f"> {guest_url_file}"
         )
 
