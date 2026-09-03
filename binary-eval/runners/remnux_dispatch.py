@@ -26,3 +26,21 @@ class RemnuxDispatchRunner:
         )
 
         self.remnux_vm.run_bash(command)
+
+    def clean_sample_workspace(
+        self,
+        sample_id: str,
+        sample_variant: str,
+        sha256: str,
+    ) -> None:
+
+        guest_sample_dir = PurePosixPath(
+            f"/home/misha.kurtz/binary-eval/work/"
+            f"{sample_id}/{sample_variant}/{sha256}"
+        )
+
+        command = (
+            f'rm -rf "{guest_sample_dir}"'
+        )
+
+        self.remnux_vm.run_bash(command)

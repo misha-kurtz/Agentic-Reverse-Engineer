@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -47,8 +48,11 @@ class VMwareRunner:
 
     def start(self, nogui: bool = True) -> None:
         """
-        Start the VM.
+        Start the VM if it is not already running.
         """
+        if self.is_running():
+            return
+
         args = ["start", self.vmx_path]
 
         if nogui:
@@ -66,6 +70,20 @@ class VMwareRunner:
         ])
 
         return "running" in result.stdout.lower()
+
+    def wait_for_guest(self, timeout=60, interval=2):
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            try:
+                self.run_bash("true")
+                return
+            except RuntimeError:
+                time.sleep(interval)
+
+        raise RuntimeError(
+            f"Guest VM did not become ready within {timeout} seconds"
+        )
 
     def run_bash(self, command: str) -> str:
         """
@@ -97,10 +115,36 @@ class VMwareRunner:
             host_path,
         ])
 
+    def is_running(self) -> bool:
+        """
+        Check if the VM is currently running.
+        """
+        result = subprocess.run(
+            [
+                self.vmrun_path,
+                "-T", "ws",
+                "list",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"vmrun list failed with exit code {result.returncode}\n"
+                f"stdout: {result.stdout.strip()}\n"
+                f"stderr: {result.stderr.strip()}"
+            )
+
+        return self.vmx_path in result.stdout
+
     def stop(self, soft: bool = True) -> None:
         """
-        Stop the VM.
+        Stop the VM if it is currently running.
         """
+        if not self.is_running():
+            return
+
         mode = "soft" if soft else "hard"
 
         self._run([
@@ -108,3 +152,5 @@ class VMwareRunner:
             self.vmx_path,
             mode,
         ])
+
+

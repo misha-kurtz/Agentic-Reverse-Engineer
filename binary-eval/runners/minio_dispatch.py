@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from runners.vmware import VMwareRunner
@@ -7,6 +8,23 @@ class MinioDispatchRunner:
     def __init__(self, datapool_vm: VMwareRunner):
         self.datapool_vm = datapool_vm
 
+    def wait_for_minio(self, timeout=60, interval=2):
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            try:
+                self.datapool_vm.run_bash(
+                    "wget -q --spider "
+                    "http://127.0.0.1:9000/minio/health/live"
+                )
+                return
+            except RuntimeError:
+                time.sleep(interval)
+
+        raise RuntimeError(
+            f"MinIO did not become ready within {timeout} seconds"
+        )
+    
     # Generate a presigned URL for downloading a sample from Minio
     def generate_presigned_url(
     self,

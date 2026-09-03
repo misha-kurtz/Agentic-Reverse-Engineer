@@ -1,6 +1,6 @@
-import json
 from pathlib import PurePosixPath
 
+from detection.signatures import KNOWN_UPX_MARKERS
 from runners.vmware import VMwareRunner
 
 
@@ -18,14 +18,18 @@ class PEFileRunner:
         output_path = str(guest_output_path)
         output_dir = str(guest_output_path.parent)
 
+        upx_markers = list(KNOWN_UPX_MARKERS)
+
         command = f"""
 mkdir -p "{output_dir}" &&
-python3 - <<'PY'
+python3 - 2>&1 <<'PY'
 import json
 import pefile
 
 sample_path = "{sample_path}"
 output_path = "{output_path}"
+
+known_upx_markers = {upx_markers!r}
 
 pe = pefile.PE(sample_path)
 
@@ -42,7 +46,8 @@ data = {{
     "size_of_image": pe.OPTIONAL_HEADER.SizeOfImage,
 
     "sections": [],
-    "imports": []
+    "imports": [],
+    "packer_markers": []
 }}
 
 for section in pe.sections:
@@ -51,8 +56,28 @@ for section in pe.sections:
         "virtual_address": section.VirtualAddress,
         "virtual_size": section.Misc_VirtualSize,
         "raw_size": section.SizeOfRawData,
+        "characteristics": section.Characteristics,
         "entropy": section.get_entropy()
     }})
+
+entry_point_rva = pe.OPTIONAL_HEADER.AddressOfEntryPoint
+entry_point_section = None
+
+for section in pe.sections:
+    start = section.VirtualAddress
+    end = start + max(
+        section.Misc_VirtualSize,
+        section.SizeOfRawData,
+    )
+
+    if start <= entry_point_rva < end:
+        entry_point_section = (
+            section.Name.decode(errors="replace")
+            .rstrip("\\x00")
+        )
+        break
+
+data["entry_point_section"] = entry_point_section
 
 if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
     for entry in pe.DIRECTORY_ENTRY_IMPORT:
@@ -73,6 +98,15 @@ if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
             }})
 
         data["imports"].append(dll)
+
+with open(sample_path, "rb") as f:
+    raw_data = f.read()
+
+for marker in known_upx_markers:
+    if marker in raw_data:
+        data["packer_markers"].append(
+            marker.decode("ascii", errors="replace")
+        )
 
 with open(output_path, "w") as f:
     json.dump(data, f, indent=2)

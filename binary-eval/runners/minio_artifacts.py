@@ -54,3 +54,23 @@ class MinioArtifactRunner:
         )
 
         self.remnux_vm.run_bash(command)
+
+    def clean_static_prefix(
+        self,
+        sample_id: str,
+        sample_variant: str,
+        sha256: str,
+    ) -> None:
+
+        destination = (
+            f"datapool/static/"
+            f"{sample_id}/"
+            f"{sample_variant}/"
+            f"{sha256}/"
+        )
+
+        command = (
+            f'mc rm --recursive --force --quiet "{destination}"'
+        )
+
+        self.remnux_vm.run_bash(command)

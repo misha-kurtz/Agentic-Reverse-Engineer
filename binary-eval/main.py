@@ -9,10 +9,11 @@ from runners.minio_artifacts import MinioArtifactRunner
 from runners.floss import FLOSSRunner
 from runners.capa import CAPARunner
 from runners.ghidra import GhidraRunner
+from workflows.static_analysis import StaticAnalysisWorkflow
 
 
 SHA256 = (
-    "96a281d5f33040f463c4e20bf33835ddeb391ddc50627d863e214d772c1b8a59"
+    "c1d38e72ae55dc9232c962df041ef5371bf53cce1696867360ebcacd2d914109"
 )
 
 
@@ -30,67 +31,109 @@ remnux_vm = VMwareRunner(
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 
-ghidra_runner = GhidraRunner(
-    remnux_vm=remnux_vm,
+datapool_was_running = datapool_vm.is_running()
+remnux_was_running = remnux_vm.is_running()
 
-    # Replace this with the actual path returned by find
-    analyze_headless_path=PurePosixPath(
-        "/opt/ghidra/support/analyzeHeadless"
-    ),
+#success = False
 
-    script_path=PurePosixPath(
-        "/home/misha.kurtz/binary-eval/ghidra-scripts"
-    ),
-)
+try:
+    datapool_vm.start()
+    remnux_vm.start()
 
-minio_dispatch = MinioDispatchRunner(datapool_vm)
-remnux_dispatch = RemnuxDispatchRunner(remnux_vm)
-pefile_runner = PEFileRunner(remnux_vm)
-minio_artifact_runner = MinioArtifactRunner(remnux_vm)
-floss_runner = FLOSSRunner(remnux_vm)
-capa_runner = CAPARunner(remnux_vm)
+    #datapool_vm.start(nogui=False)
+    #remnux_vm.start()
 
-controller = AnalysisController(
-    minio_dispatch=minio_dispatch,
-    remnux_dispatch=remnux_dispatch,
-    pefile_runner=pefile_runner,
-    floss_runner=floss_runner,
-    capa_runner=capa_runner,
-    ghidra_runner=ghidra_runner,
-    minio_artifact_runner=minio_artifact_runner,
-)
+    datapool_vm.wait_for_guest()
+    remnux_vm.wait_for_guest()
 
-state = controller.prepare_sample(
-    sample_id="B001",
-    sha256=SHA256,
-    sample_variant="original",
-    host_temp_url_path=Path(
-        r"C:\Users\MK\AppData\Local\Temp\presigned_url.txt"
-    ),
-)
+    ghidra_runner = GhidraRunner(
+        remnux_vm=remnux_vm,
+        analyze_headless_path=PurePosixPath(
+            "/opt/ghidra/support/analyzeHeadless"
+        ),
+        script_path=PurePosixPath(
+            "/home/misha.kurtz/binary-eval/ghidra-scripts"
+        ),
+    )
 
-state = controller.run_pe_analysis(state)
-state = controller.run_floss_analysis(state)
-state = controller.run_capa_analysis(state)
-state = controller.run_ghidra_analysis(state)
+    minio_dispatch = MinioDispatchRunner(datapool_vm)
+    remnux_dispatch = RemnuxDispatchRunner(remnux_vm)
+    minio_artifact_runner = MinioArtifactRunner(remnux_vm)
+    pefile_runner = PEFileRunner(remnux_vm)
+    floss_runner = FLOSSRunner(remnux_vm)
+    capa_runner = CAPARunner(remnux_vm)
 
-print(f"sample_id: {state.sample_id}")
-print(f"variant: {state.sample_variant}")
-print(f"sample_downloaded: {state.sample_downloaded}")
-print(f"sha256_verified: {state.sha256_verified}")
+    minio_dispatch.wait_for_minio()
 
-print(f"pe_metadata_path: {state.pe_metadata_path}")
-print(f"pe_analysis_complete: {state.pe_analysis_complete}")
-print(f"pe_upload_complete: {state.pe_upload_complete}")
+    static_analysis_workflow = StaticAnalysisWorkflow(
+        pefile_runner=pefile_runner,
+        floss_runner=floss_runner,
+        capa_runner=capa_runner,
+        ghidra_runner=ghidra_runner,
+        minio_artifact_runner=minio_artifact_runner,
+    )
 
-print(f"floss_output_path: {state.floss_output_path}")
-print(f"floss_analysis_complete: {state.floss_analysis_complete}")
-print(f"floss_upload_complete: {state.floss_upload_complete}")
+    controller = AnalysisController(
+        minio_dispatch=minio_dispatch,
+        remnux_dispatch=remnux_dispatch,
+        static_analysis_workflow=static_analysis_workflow,
+    )
 
-print(f"capa_output_path: {state.capa_output_path}")
-print(f"capa_analysis_complete: {state.capa_analysis_complete}")
-print(f"capa_upload_complete: {state.capa_upload_complete}")
 
-print(f"ghidra_output_dir: {state.ghidra_output_dir}")
-print(f"ghidra_analysis_complete: {state.ghidra_analysis_complete}")
-print(f"ghidra_upload_complete: {state.ghidra_upload_complete}")
+    state = controller.prepare_sample(
+        sample_id="B001",
+        sha256=SHA256,
+        sample_variant="encrypted",
+        host_temp_url_path=Path(
+            r"C:\Users\MK\AppData\Local\Temp\presigned_url.txt"
+        ),
+    )
+
+    state = controller.run_static_analysis(
+        state,
+        binary_view="initial",
+    )
+
+    #success = True
+    
+    print(f"sample_id: {state.sample_id}")
+    print(f"variant: {state.sample_variant}")
+    print(f"sample_downloaded: {state.sample_downloaded}")
+    print(f"sha256_verified: {state.sha256_verified}")
+
+    print(f"pe_metadata_path: {state.pe_metadata_path}")
+    print(f"pe_analysis_complete: {state.pe_analysis_complete}")
+    print(f"pe_upload_complete: {state.pe_upload_complete}")
+
+    print(f"floss_output_path: {state.floss_output_path}")
+    print(f"floss_analysis_complete: {state.floss_analysis_complete}")
+    print(f"floss_upload_complete: {state.floss_upload_complete}")
+
+    print(f"capa_output_path: {state.capa_output_path}")
+    print(f"capa_analysis_complete: {state.capa_analysis_complete}")
+    print(f"capa_upload_complete: {state.capa_upload_complete}")
+
+    print(f"ghidra_output_dir: {state.ghidra_output_dir}")
+    print(f"ghidra_analysis_complete: {state.ghidra_analysis_complete}")
+    print(f"ghidra_upload_complete: {state.ghidra_upload_complete}")
+
+# finally:
+#     if success:
+#         if not remnux_was_running:
+#             remnux_vm.stop()
+#
+#         if not datapool_was_running:
+#             datapool_vm.stop()
+
+finally:
+    if not remnux_was_running:
+        try:
+            remnux_vm.stop()
+        except RuntimeError:
+            pass
+
+    if not datapool_was_running:
+        try:
+            datapool_vm.stop()
+        except RuntimeError:
+            pass
