@@ -131,15 +131,15 @@ with open(r"C:\\binary-eval\\regshot-start-status.txt", "w") as f:
         self.windows_vm.run_powershell(command)
 
     def take_first_snapshot(self) -> None:
-        self._take_snapshot("&1st shot")
+        self._take_snapshot("&1st shot", "&2nd shot")
 
     def take_second_snapshot(self) -> None:
-        self._take_snapshot("&2nd shot")
+        self._take_snapshot("&2nd shot", "C&ompare")
 
-    def _take_snapshot(self, button_name: str) -> None:
+    def _take_snapshot(self, button_name: str, completion_button_name: str) -> None:
         code = f'''
-from pywinauto import Application
-from pywinauto.keyboard import send_keys
+from pywinauto import Application, Desktop
+import time
 
 with open(r"C:\\binary-eval\\regshot.pid", "r") as f:
     pid = int(f.read().strip())
@@ -150,13 +150,45 @@ window = app.top_window()
 window.restore()
 window.set_focus()
 
-button = window.child_window(title="{button_name}", class_name="Button")
+button = window.child_window(
+    title="{button_name}",
+    class_name="Button"
+)
+
 button.wait("enabled", timeout=10)
 button.click_input()
 
-send_keys("{{ENTER}}")
+time.sleep(0.5)
 
-app.wait_cpu_usage_lower(threshold=5, timeout=180)
+popup = Desktop(backend="win32").window(class_name="#32768")
+popup.wait("visible", timeout=10)
+
+menu = popup.menu()
+shot = menu.get_menu_path("Shot")[0]
+shot.click_input()
+
+app.wait_cpu_usage_lower(
+    threshold=5,
+    timeout=180
+)
+
+deadline = time.time() + 30
+
+while time.time() < deadline:
+    completion_button = window.child_window(
+        title="{completion_button_name}",
+        class_name="Button"
+    )
+
+    if completion_button.exists() and completion_button.is_enabled():
+        break
+
+    time.sleep(1)
+else:
+    raise RuntimeError(
+        "Regshot snapshot scan ended, but "
+        "{completion_button_name} never became enabled"
+    )
 '''
         self._run_python(code)
 

@@ -84,6 +84,12 @@ regshot_runner.clear()
 regshot_runner.stop()
 ```
 
+``` powershell
+Get-Process | Where-Object { $_.ProcessName -like "*Regshot*" }
+Unregister-ScheduledTask -TaskName "BinaryEval-Regshot" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "BinaryEval-Regshot-App" -Confirm:$false -ErrorAction SilentlyContinue
+```
+
 
 sysmon.py
 Windows baseline integration test
