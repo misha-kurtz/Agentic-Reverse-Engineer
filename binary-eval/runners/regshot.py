@@ -91,7 +91,7 @@ window.restore()
 with open(r"C:\\binary-eval\\regshot-start-status.txt", "w") as f:
     f.write("Window restored")
 
-output = window.child_window(class_name="Edit", found_index=2)
+output = window.child_window(best_match="Output path:Edit")
 output.set_edit_text(r"{output_dir}")
 
 with open(r"C:\\binary-eval\\regshot-start-status.txt", "w") as f:
