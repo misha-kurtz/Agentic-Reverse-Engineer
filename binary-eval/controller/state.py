@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+# binary-eval/controller/state.py
+
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 @dataclass
@@ -36,15 +38,45 @@ class AnalysisState:
     ghidra_analysis_complete: bool = False
     ghidra_upload_complete: bool = False
 
-    # Detection
+    # Packing detection
     packing_detected: bool = False
     packing_family: str | None = None
     packing_confidence: float = 0.0
-    encrypted_payload_suspected: bool = False
-    encryption_confidence: float = 0.0
+    packing_indicators: list[str] = field(default_factory=list)
 
-    # Dynamic
+    # Encryption detection
+    encrypted_payload_suspected: bool = False
+    encryption_family: str | None = None
+    encryption_confidence: float = 0.0
+    encryption_indicators: list[str] = field(default_factory=list)
+
+    # Recovery policy
+    recovery_policy: str | None = None
+
+    # Dynamic paths
+    windows_dynamic_dir: str | None = None
+    ubuntu_dynamic_dir: PurePosixPath | None = None
+
+    regshot_output_path: str | None = None
+    noriben_output_path: str | None = None
+    sysmon_output_path: str | None = None
+    pcap_output_path: PurePosixPath | None = None
+    inetsim_output_dir: PurePosixPath | None = None
+
+    # Dynamic readiness
+    inetsim_running: bool = False
+    packet_capture_running: bool = False
+    sysmon_verified: bool = False
+    noriben_running: bool = False
+
+    # Dynamic execution
+    dynamic_sample_downloaded: bool = False
+    dynamic_sha256_verified: bool = False
+    sample_executed: bool = False
+    noriben_output_path: str | None = None
+    noriben_running: bool = False
     dynamic_analysis_complete: bool = False
+    dynamic_upload_complete: bool = False
 
     # Recovery
     recovery_required: bool = False

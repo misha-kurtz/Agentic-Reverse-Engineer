@@ -1,3 +1,5 @@
+/* ExportStaticArtifacts.java */
+
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;

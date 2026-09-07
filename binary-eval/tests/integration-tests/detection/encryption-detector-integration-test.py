@@ -20,6 +20,11 @@ SHA256 = (
 )
 
 
+
+
+
+
+
 '''
 
 SHA256 = (
@@ -43,13 +48,6 @@ remnux_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\REMnux Linux\REMnux Linux\REMnux Linux.vmx",
     guest_username="misha.kurtz",
     password_env_var="REMNUX_GUEST_PASSWORD",
-    vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
-)
-
-windows_vm = VMwareRunner(
-    vmx_path=r"D:\Virtual Machines\Windows 11 x64\Windows 11 x64\Windows 11 x64.vmx",
-    guest_username=r".\misha.kurtz",
-    password_env_var="WINDOWS_GUEST_PASSWORD",
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 

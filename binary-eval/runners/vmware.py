@@ -1,8 +1,9 @@
-# runners/vmware.py
+# binary-eval/runners/vmware.py
 
 import os
 import subprocess
 import time
+import base64
 from pathlib import Path
 
 
@@ -71,18 +72,33 @@ class VMwareRunner:
 
         return "running" in result.stdout.lower()
 
-    def wait_for_guest(self, timeout=60, interval=2):
+    def wait_for_guest(
+        self,
+        timeout=60,
+        interval=2,
+        shell: str = "bash",
+    ):
         deadline = time.time() + timeout
+        last_error = None
 
         while time.time() < deadline:
             try:
-                self.run_bash("true")
+                if shell == "windows":
+                    self.run_program(
+                        r"C:\Windows\System32\whoami.exe"
+                    )
+                else:
+                    self.run_bash("true")
+
                 return
-            except RuntimeError:
+
+            except RuntimeError as exc:
+                last_error = exc
                 time.sleep(interval)
 
         raise RuntimeError(
-            f"Guest VM did not become ready within {timeout} seconds"
+            f"Guest VM did not become ready within {timeout} seconds\n"
+            f"Last error:\n{last_error}"
         )
 
     def run_bash(self, command: str) -> str:
@@ -101,6 +117,42 @@ class VMwareRunner:
         ])
 
         return result.stdout
+
+    def run_program(
+        self,
+        program_path: str,
+        arguments: list[str] | None = None,
+    ) -> str:
+
+        args = [
+            "-gu", self.guest_username,
+            "-gp", self.guest_password,
+            "runProgramInGuest",
+            self.vmx_path,
+            program_path,
+        ]
+
+        if arguments:
+            args.extend(arguments)
+
+        result = self._run(args)
+
+        return result.stdout
+
+    def run_powershell(self, command: str) -> str:
+        encoded_command = base64.b64encode(
+            command.encode("utf-16le")
+        ).decode("ascii")
+
+        return self.run_program(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                encoded_command,
+            ],
+        )
 
     def copy_from_guest(self, guest_path: str, host_path: str) -> None:
         """

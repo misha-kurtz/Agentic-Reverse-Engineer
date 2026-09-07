@@ -6,6 +6,9 @@ from controller.state import AnalysisState
 from runners.minio_dispatch import MinioDispatchRunner
 from runners.remnux_dispatch import RemnuxDispatchRunner
 from workflows.static_analysis import StaticAnalysisWorkflow
+from workflows.dynamic_analysis import DynamicAnalysisWorkflow
+from controller.policy import choose_recovery_policy
+from controller.decisions import RecoveryPolicy
 
 
 class AnalysisController:
@@ -14,10 +17,14 @@ class AnalysisController:
         minio_dispatch: MinioDispatchRunner,
         remnux_dispatch: RemnuxDispatchRunner,
         static_analysis_workflow: StaticAnalysisWorkflow,
+        detection_workflow,
+        dynamic_analysis_workflow: DynamicAnalysisWorkflow | None = None,
     ):
         self.minio_dispatch = minio_dispatch
         self.remnux_dispatch = remnux_dispatch
         self.static_analysis_workflow = static_analysis_workflow
+        self.detection_workflow = detection_workflow
+        self.dynamic_analysis_workflow = dynamic_analysis_workflow
 
     # --------------------------------------------------
     # Download malware sample from Debian MinIO server to 
@@ -90,10 +97,10 @@ class AnalysisController:
 
         return state
 
-    # --------------------------------------------------
+    # ------------------------------------------------------
     # Invoke static analysis for current malware sample.
     # Return updated sample analysis state.
-    # --------------------------------------------------
+    # ------------------------------------------------------
     def run_static_analysis(
         self,
         state: AnalysisState,
@@ -103,4 +110,68 @@ class AnalysisController:
         return self.static_analysis_workflow.run(
             state,
             binary_view=binary_view,
+        )
+
+
+    # -----------------------------------------------------
+    # Invoke detection method for current malware sample.
+    # Determines if sample is packed or encrypted and
+    # updates sample analysis state.
+    # -----------------------------------------------------
+    def run_detection(
+        self,
+        state: AnalysisState,
+    ) -> AnalysisState:
+
+        return self.detection_workflow.run(state)
+
+    # --------------------------------------------------------
+    # Apply recovery policy for current malware sample.
+    # Protected samples may require dynamic recovery:
+    #  - packing -> recover payload via automated unpacking
+    #  - encryption-> recover payload via automated decryption
+    #  - no obfuscation -> no recovery workflow is required.
+    # ---------------------------------------------------------
+    def apply_policy(
+        self,
+        state: AnalysisState,
+    ) -> AnalysisState:
+
+        policy = choose_recovery_policy(state)
+
+        state.recovery_policy = policy.value
+
+        if policy is RecoveryPolicy.AUTOMATED_UNPACKING:
+            state.recovery_required = True
+            state.recovery_strategy = "dynamic"
+
+        elif policy is RecoveryPolicy.AUTOMATED_DECRYPTION:
+            state.recovery_required = True
+            state.recovery_strategy = "dynamic"
+
+        else:
+            state.recovery_required = False
+            state.recovery_strategy = None
+
+        return state
+
+    # --------------------------------------------------
+    # Run baseline dynamic analysis for every sample.
+    # --------------------------------------------------
+    def run_dynamic_analysis(
+        self,
+        state: AnalysisState,
+        presigned_url: str,
+        execution_seconds: int = 60,
+    ) -> AnalysisState:
+
+        if self.dynamic_analysis_workflow is None:
+            raise RuntimeError(
+                "Dynamic analysis workflow has not been configured"
+            )
+
+        return self.dynamic_analysis_workflow.run(
+            state=state,
+            presigned_url=presigned_url,
+            execution_seconds=execution_seconds,
         )

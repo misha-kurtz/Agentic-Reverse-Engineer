@@ -21,10 +21,10 @@ SHA256 = (
 
 
 '''
-
 SHA256 = (
     "96a281d5f33040f463c4e20bf33835ddeb391ddc50627d863e214d772c1b8a59"
 )
+
 SHA256 = (
     "7141ef42cb8c213e2ee02cb2ef18e5bf8e862282ab236d39f4115199c16bf402"
 )
@@ -43,13 +43,6 @@ remnux_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\REMnux Linux\REMnux Linux\REMnux Linux.vmx",
     guest_username="misha.kurtz",
     password_env_var="REMNUX_GUEST_PASSWORD",
-    vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
-)
-
-windows_vm = VMwareRunner(
-    vmx_path=r"D:\Virtual Machines\Windows 11 x64\Windows 11 x64\Windows 11 x64.vmx",
-    guest_username=r".\misha.kurtz",
-    password_env_var="WINDOWS_GUEST_PASSWORD",
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 
@@ -149,21 +142,13 @@ try:
     print(f"ghidra_upload_complete: {state.ghidra_upload_complete}")
 
     print()
-    print("=== Packing Detection ===")
+    print("=== Detection ===")
     print(f"packing_detected: {state.packing_detected}")
     print(f"packing_family: {state.packing_family}")
     print(f"packing_confidence: {state.packing_confidence}")
+
     print("packing_indicators:")
     for indicator in state.packing_indicators:
-        print(f"  - {indicator}")
-
-    print()
-    print("=== Encryption Detection ===")
-    print(f"encrypted_payload_suspected: {state.encrypted_payload_suspected}")
-    print(f"encryption_family: {state.encryption_family}")
-    print(f"encryption_confidence: {state.encryption_confidence}")
-    print("encryption_indicators:")
-    for indicator in state.encryption_indicators:
         print(f"  - {indicator}")
 
     print()
