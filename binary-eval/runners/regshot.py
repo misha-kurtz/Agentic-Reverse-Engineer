@@ -193,7 +193,8 @@ else:
         self._run_python(code)
 
     def compare(self, output_dir: PureWindowsPath) -> PureWindowsPath:
-        code = '''
+        code = f'''
+from pathlib import Path
 from pywinauto import Application
 import time
 
@@ -204,14 +205,31 @@ app = Application(backend="win32").connect(process=pid)
 window = app.top_window()
 window.restore()
 
-button = window.child_window(title="C&ompare", class_name="Button")
-button.wait("enabled", timeout=30)
-button.click_input()
+output_dir = Path(r"{output_dir}")
+before = set(output_dir.glob("*.txt"))
 
-time.sleep(2)
+button = window.child_window(
+    title="C&ompare",
+    class_name="Button"
+)
+
+button.wait("enabled", timeout=30)
+button.click()
+
+deadline = time.time() + 150
+
+while time.time() < deadline:
+    after = set(output_dir.glob("*.txt"))
+    new_files = after - before
+
+    if new_files:
+        break
+
+    time.sleep(1)
+else:
+    raise RuntimeError("Regshot comparison did not create a TXT report")
 '''
         self._run_python(code)
-
         return output_dir
 
     def clear(self) -> None:
