@@ -8,7 +8,7 @@ binary-eval/
 │   ├── policy.py
 │   └── decisions.py
 │
-├── runners/    #Ex. How can I execute capa, FLOSS, Ghidra, etc?
+├── runners/    #Ex. How do I execute capa, FLOSS, Ghidra, etc?
 │   ├── base.py
 │   ├── vmware.py
 │   ├── ghidra.py
@@ -21,7 +21,7 @@ binary-eval/
 │   ├── wireshark.py
 │   └── x64dbg.py
 │
-├── workflows/ #Ex. What sequence of ops constitutes UPX recovery
+├── workflows/ #Ex. What does static analysis consist of?
 │   ├── static_analysis.py
 │   ├── dynamic_analysis.py
 │   ├── upx_recovery.py
