@@ -196,6 +196,7 @@ else:
         code = f'''
 from pathlib import Path
 from pywinauto import Application
+from pywinauto.keyboard import send_keys
 import time
 
 with open(r"C:\\binary-eval\\regshot.pid", "r") as f:
@@ -203,7 +204,9 @@ with open(r"C:\\binary-eval\\regshot.pid", "r") as f:
 
 app = Application(backend="win32").connect(process=pid)
 window = app.top_window()
+
 window.restore()
+window.set_focus()
 
 output_dir = Path(r"{output_dir}")
 before = set(output_dir.glob("*.txt"))
@@ -214,9 +217,10 @@ button = window.child_window(
 )
 
 button.wait("enabled", timeout=30)
-button.click()
 
-deadline = time.time() + 150
+send_keys("%o")
+
+deadline = time.time() + 180
 
 while time.time() < deadline:
     after = set(output_dir.glob("*.txt"))
@@ -229,6 +233,7 @@ while time.time() < deadline:
 else:
     raise RuntimeError("Regshot comparison did not create a TXT report")
 '''
+
         self._run_python(code)
         return output_dir
 
