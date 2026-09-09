@@ -14,18 +14,19 @@ class UbuntuRunner:
 
     def clean_dynamic_workspace(
         self,
-        sample_id: str,
-        sample_variant: str,
-        sha256: str,
-    ) -> None:
-
+        sample_id,
+        sample_variant,
+        sha256,
+    ):
         guest_sample_dir = PurePosixPath(
             f"/home/kurtz/binary-eval/work/"
             f"{sample_id}/{sample_variant}/{sha256}"
         )
 
         self.ubuntu_vm.run_bash(
-            f'rm -rf "{guest_sample_dir}"'
+            f"sudo -S -p '' "
+            f'rm -rf "{guest_sample_dir}" '
+            f"< /home/kurtz/.inetsim"
         )
 
     def prepare_dynamic_workspace(

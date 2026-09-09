@@ -193,6 +193,8 @@ else:
         self._run_python(code)
 
     def compare(self, output_dir: PureWindowsPath) -> PureWindowsPath:
+        result_path_file = r"C:\binary-eval\regshot-result-path.txt"
+
         code = f'''
 from pathlib import Path
 from pywinauto import Application
@@ -204,7 +206,6 @@ with open(r"C:\\binary-eval\\regshot.pid", "r") as f:
 
 app = Application(backend="win32").connect(process=pid)
 window = app.top_window()
-
 window.restore()
 window.set_focus()
 
@@ -221,21 +222,37 @@ button.wait("enabled", timeout=30)
 send_keys("%o")
 
 deadline = time.time() + 180
+result_path = None
 
 while time.time() < deadline:
     after = set(output_dir.glob("*.txt"))
     new_files = after - before
 
     if new_files:
+        result_path = max(new_files, key=lambda p: p.stat().st_mtime)
         break
 
     time.sleep(1)
-else:
-    raise RuntimeError("Regshot comparison did not create a TXT report")
-'''
 
+if result_path is None:
+    raise RuntimeError("Regshot comparison did not create a TXT report")
+
+with open(r"{result_path_file}", "w", encoding="utf-8") as f:
+    f.write(str(result_path))
+'''
         self._run_python(code)
-        return output_dir
+
+        self.windows_vm.run_powershell(
+            f'if (-not (Test-Path "{result_path_file}")) {{ exit 1 }}'
+        )
+
+        host_temp = r"C:\Users\MK\AppData\Local\Temp\regshot-result-path.txt"
+        self.windows_vm.copy_from_guest(result_path_file, host_temp)
+
+        with open(host_temp, "r", encoding="utf-8") as f:
+            result_path = f.read().strip()
+
+        return PureWindowsPath(result_path)
 
     def clear(self) -> None:
         code = '''

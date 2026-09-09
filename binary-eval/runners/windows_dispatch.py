@@ -54,16 +54,10 @@ class WindowsDispatchRunner:
             rf"\{sample_variant}\{sha256}"
         )
 
-        command = (
-            f'if (Test-Path "{guest_sample_dir}") {{ '
-            f'Remove-Item '
-            f'-Recurse '
-            f'-Force '
-            f'"{guest_sample_dir}" '
-            f'}}'
+        self.windows_vm.run_powershell(
+            f'Remove-Item "{guest_sample_dir}" '
+            f'-Recurse -Force -ErrorAction SilentlyContinue'
         )
-
-        self.windows_vm.run_powershell(command)
 
     def execute_sample(
         self,
