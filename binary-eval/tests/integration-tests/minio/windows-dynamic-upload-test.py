@@ -111,7 +111,7 @@ try:
     print("Debian guest is ready.")
 
     print("Waiting for Windows guest...")
-    windows_vm.wait_for_guest()
+    windows_vm.wait_for_guest(shell="windows")
     print("Windows guest is ready.")
 
     # --------------------------------------------------
@@ -135,22 +135,14 @@ try:
 
     noriben_runner = NoribenRunner(
         windows_vm=windows_vm,
-        python_path=PureWindowsPath(
-            r"C:\Path\To\python.exe"
-        ),
-        noriben_path=PureWindowsPath(
-            r"C:\Path\To\Noriben.py"
-        ),
+        python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
+        noriben_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Noriben\Noriben.py"),
     )
 
     regshot_runner = RegshotRunner(
         windows_vm=windows_vm,
-        python_path=PureWindowsPath(
-            r"C:\Path\To\python.exe"
-        ),
-        regshot_path=PureWindowsPath(
-            r"C:\Path\To\Regshot.exe"
-        ),
+        python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
+        regshot_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Regshot-1.9.0\Regshot-x64-Unicode.exe"),
     )
 
     sysmon_runner = SysmonRunner(

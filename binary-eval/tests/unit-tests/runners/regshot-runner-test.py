@@ -15,12 +15,8 @@ windows_was_running = windows_vm.is_running()
 
 regshot_runner = RegshotRunner(
     windows_vm=windows_vm,
-    python_path=PureWindowsPath(
-        r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"
-    ),
-    regshot_path=PureWindowsPath(
-        r"C:\Users\misha.kurtz\dynamic_analysis\Regshot-1.9.0\Regshot-x64-Unicode.exe"
-    ),
+    python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
+    regshot_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Regshot-1.9.0\Regshot-x64-Unicode.exe"),
 )
 
 try:
