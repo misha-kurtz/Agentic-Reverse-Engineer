@@ -66,7 +66,6 @@ class MinioDynamicRunner:
             f"{sample_id}/"
             f"{sample_variant}/"
             f"{sha256}/"
-            f"{directory_name}/"
         )
 
         command = (
