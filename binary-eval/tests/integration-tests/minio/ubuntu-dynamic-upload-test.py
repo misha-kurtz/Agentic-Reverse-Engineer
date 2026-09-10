@@ -70,11 +70,13 @@ try:
     inetsim_minio_runner = MinioDynamicRunner(
         vm=ubuntu_vm,
         alias="datapool-inetsim",
+        platform="linux",
     )
 
     pcap_minio_runner = MinioDynamicRunner(
         vm=ubuntu_vm,
         alias="datapool-pcap",
+        platform="linux",
     )
 
     # --------------------------------------------------
