@@ -44,8 +44,7 @@ class UbuntuRunner:
         command = (
             f'mkdir -p '
             f'"{guest_dynamic_dir}/inetsim" '
-            f'"{guest_dynamic_dir}/pcap" '
-            f'"{guest_dynamic_dir}/exfil"'
+            f'"{guest_dynamic_dir}/wireshark"'
         )
 
         self.ubuntu_vm.run_bash(command)

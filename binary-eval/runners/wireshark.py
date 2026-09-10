@@ -19,7 +19,7 @@ class WiresharkRunner:
         dynamic_dir: PurePosixPath,
     ) -> PurePosixPath:
 
-        pcap_dir = dynamic_dir / "pcap"
+        pcap_dir = dynamic_dir / "wireshark"
         pcap_path = pcap_dir / "traffic.pcapng"
         pid_file = dynamic_dir / "tshark.pid"
         log_file = dynamic_dir / "tshark.log"
@@ -65,9 +65,14 @@ class WiresharkRunner:
 
         command = (
             f'if [ -f "{pid_file}" ]; then '
-            f'kill "$(cat "{pid_file}")" 2>/dev/null || true; '
+            f'pid="$(cat "{pid_file}")"; '
+            f'kill "$pid" 2>/dev/null || true; '
+            f'while kill -0 "$pid" 2>/dev/null; do '
+            f'sleep 0.2; '
+            f'done; '
             f'rm -f "{pid_file}"; '
-            f'fi'
+            f'fi; '
+            f'sync'
         )
 
         self.ubuntu_vm.run_bash(command)

@@ -65,7 +65,7 @@ class INetSimRunner:
 
         self._run_sudo(f'cp /var/log/inetsim/service.log "{logs_dir}/service.log"')
 
-        self._run_sudo(f"""bash -c 'cp /var/log/inetsim/report/*.txt "{reports_dir}/"'""")
+        self._run_sudo(f"""bash -c 'if compgen -G "/var/log/inetsim/report/*.txt" > /dev/null; then cp /var/log/inetsim/report/*.txt "{reports_dir}/"; fi'""")
 
         self._run_sudo(f"""bash -c 'if [ -d /var/lib/inetsim/http/postdata ] && [ "$(ls -A /var/lib/inetsim/http/postdata 2>/dev/null)" ]; then cp -a /var/lib/inetsim/http/postdata/. "{postdata_dir}/"; fi'""")
 

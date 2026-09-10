@@ -57,27 +57,38 @@ class AnalysisState:
     windows_dynamic_dir: str | None = None
     ubuntu_dynamic_dir: PurePosixPath | None = None
 
-    regshot_output_path: str | None = None
-    noriben_output_path: str | None = None
-    sysmon_output_path: str | None = None
+    # Ubuntu dynamic artifacts
     pcap_output_path: PurePosixPath | None = None
     inetsim_output_dir: PurePosixPath | None = None
 
-    # Dynamic readiness
+    # Windows dynamic artifacts
+    regshot_output_path: str | None = None
+    noriben_output_path: str | None = None
+    sysmon_output_path: str | None = None
+
+    # Collection status
     inetsim_running: bool = False
     packet_capture_running: bool = False
-    sysmon_verified: bool = False
     noriben_running: bool = False
+    regshot_running: bool = False
+    sysmon_verified: bool = False
 
-    # Dynamic execution
+    # Dynamic sample info
     dynamic_sample_downloaded: bool = False
     dynamic_sha256_verified: bool = False
     sample_executed: bool = False
-    noriben_output_path: str | None = None
-    noriben_running: bool = False
-    dynamic_analysis_complete: bool = False
-    dynamic_upload_complete: bool = False
 
+    # Upload status 
+    inetsim_upload_complete: bool = False
+    wireshark_upload_complete: bool = False
+    noriben_upload_complete: bool = False
+    regshot_upload_complete: bool = False
+    sysmon_upload_complete: bool = False
+
+
+
+
+'''
     # Recovery
     recovery_required: bool = False
     recovery_strategy: str | None = None
@@ -104,3 +115,5 @@ class AnalysisState:
     recovered_capa_upload_complete: bool = False
     recovered_ghidra_analysis_complete: bool = False
     recovered_ghidra_upload_complete: bool = False
+'''
+    
