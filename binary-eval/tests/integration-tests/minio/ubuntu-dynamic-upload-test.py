@@ -1,22 +1,30 @@
 # binary-eval/ubuntu-dynamic-upload-test.py
 
 '''
-Integration test for upload of dynamic
-networking artifacts from Ubuntu Inetsim 
-server to Debian MinIO S3 bucket
+Integration test for Ubuntu dynamic artifact collection
+and upload to Debian MinIO S3 bucket.
 
-→ INetSim runtime cleanup
-→ MinIO prefix cleanup
-→ workspace creation
-→ start INetSim
-→ start Wireshark/tshark
-→ wait briefly for collection
-→ stop Wireshark
-→ stop INetSim
-→ collect INetSim artifacts
-→ upload PCAP
-→ upload INetSim directory
+Flow:
+→ Start Debian datapool VM
+→ Start Ubuntu INetSim/Gateway VM
+→ Wait for both guests
+→ Wait for MinIO readiness
+→ Clean Ubuntu dynamic workspace
+→ Clean INetSim runtime artifacts
+→ Clean MinIO artifact prefixes
+→ Prepare Ubuntu dynamic workspace
+→ Start INetSim
+→ Start Wireshark/tshark
+→ Generate test network traffic
+→ Stop Wireshark
+→ Stop INetSim
+→ Collect INetSim artifacts
+→ Upload Wireshark PCAP
+→ Upload INetSim artifacts
+→ Verify MinIO objects
+→ Stop VMs only if this test started them
 '''
+
 import time
 
 from runners.vmware import VMwareRunner
@@ -24,14 +32,30 @@ from runners.ubuntu import UbuntuRunner
 from runners.inetsim import INetSimRunner
 from runners.wireshark import WiresharkRunner
 from runners.minio_dynamic import MinioDynamicRunner
+from runners.minio_dispatch import MinioDispatchRunner
 
 
 SAMPLE_ID = "B001"
 SAMPLE_VARIANT = "original"
 SHA256 = "96a281d5f33040f463c4e20bf33835ddeb391ddc50627d863e214d772c1b8a59"
-
 EXECUTION_SECONDS = 15
 
+
+# --------------------------------------------------
+# Debian Datapool VM
+# --------------------------------------------------
+
+datapool = VMwareRunner(
+    vmx_path=r"D:\Virtual Machines\Debian 12.x 64-bit Data Pool Server\Debian 12.x 64-bit Data Pool Server\Debian 12.x 64-bit Data Pool Server.vmx",
+    guest_username="kurtz",
+    password_env_var="DATAPOOL_GUEST_PASSWORD",
+    vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
+)
+
+
+# --------------------------------------------------
+# Ubuntu INetSim / Gateway VM
+# --------------------------------------------------
 
 ubuntu_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\Ubuntu 64-bit Inetsim-Gateway\Ubuntu 64-bit Inetsim-Gateway\Ubuntu 64-bit Inetsim-Gateway.vmx",
@@ -41,19 +65,57 @@ ubuntu_vm = VMwareRunner(
 )
 
 
+# --------------------------------------------------
+# Record initial VM state
+# --------------------------------------------------
+
+datapool_was_running = datapool.is_running()
 ubuntu_was_running = ubuntu_vm.is_running()
+
+# Initialize cleanup variables in case startup fails
+inetsim_runner = None
+wireshark_runner = None
+dynamic_dir = None
 
 
 try:
     # --------------------------------------------------
-    # Start Ubuntu VM
+    # Start required VMs
     # --------------------------------------------------
+
+    print("Starting Debian datapool VM...")
+    datapool.start()
+
+    print("Starting Ubuntu INetSim/Gateway VM...")
     ubuntu_vm.start()
-    ubuntu_vm.wait_for_guest()
 
     # --------------------------------------------------
-    # Instantiate runners
+    # Wait for VMware Tools / guest readiness
     # --------------------------------------------------
+
+    print("Waiting for Debian guest...")
+    datapool.wait_for_guest()
+    print("Debian guest is ready.")
+
+    print("Waiting for Ubuntu guest...")
+    ubuntu_vm.wait_for_guest()
+    print("Ubuntu guest is ready.")
+
+    # --------------------------------------------------
+    # Verify MinIO service readiness on Debian
+    # --------------------------------------------------
+
+    print("Waiting for MinIO...")
+
+    minio_dispatch = MinioDispatchRunner(datapool)
+    minio_dispatch.wait_for_minio()
+
+    print("MinIO is ready.")
+
+    # --------------------------------------------------
+    # Instantiate Ubuntu runners
+    # --------------------------------------------------
+
     ubuntu_runner = UbuntuRunner(
         ubuntu_vm=ubuntu_vm,
     )
@@ -66,6 +128,10 @@ try:
         ubuntu_vm=ubuntu_vm,
         interface="ens33",
     )
+
+    # --------------------------------------------------
+    # Instantiate MinIO dynamic upload runners
+    # --------------------------------------------------
 
     inetsim_minio_runner = MinioDynamicRunner(
         vm=ubuntu_vm,
@@ -82,6 +148,7 @@ try:
     # --------------------------------------------------
     # Clean Ubuntu workspace from previous run
     # --------------------------------------------------
+
     print("Cleaning Ubuntu dynamic workspace...")
 
     ubuntu_runner.clean_dynamic_workspace(
@@ -93,13 +160,14 @@ try:
     # --------------------------------------------------
     # Clean INetSim runtime artifacts
     # --------------------------------------------------
-    print("Cleaning INetSim runtime artifacts...")
 
+    print("Cleaning INetSim runtime artifacts...")
     inetsim_runner.clean_runtime_artifacts()
 
     # --------------------------------------------------
-    # Clean existing MinIO dynamic artifacts
+    # Clean existing MinIO artifact prefixes
     # --------------------------------------------------
+
     print("Cleaning existing INetSim MinIO prefix...")
 
     inetsim_minio_runner.clean_directory_prefix(
@@ -121,6 +189,7 @@ try:
     # --------------------------------------------------
     # Prepare Ubuntu dynamic workspace
     # --------------------------------------------------
+
     print("Preparing Ubuntu dynamic workspace...")
 
     dynamic_dir = ubuntu_runner.prepare_dynamic_workspace(
@@ -134,6 +203,7 @@ try:
     # --------------------------------------------------
     # Start INetSim
     # --------------------------------------------------
+
     print("Starting INetSim...")
 
     inetsim_runner.start(
@@ -141,15 +211,14 @@ try:
     )
 
     if not inetsim_runner.is_running():
-        raise RuntimeError(
-            "INetSim failed to start"
-        )
+        raise RuntimeError("INetSim failed to start")
 
     print("INetSim is running.")
 
     # --------------------------------------------------
-    # Start Wireshark/tshark capture
+    # Start Wireshark / tshark
     # --------------------------------------------------
+
     print("Starting packet capture...")
 
     pcap_output_path = wireshark_runner.start(
@@ -159,30 +228,33 @@ try:
     time.sleep(2)
 
     if not wireshark_runner.is_running(dynamic_dir):
-        raise RuntimeError(
-            "Wireshark/tshark failed to start"
-        )
+        raise RuntimeError("Wireshark/tshark failed to start")
 
     print(f"PCAP output path: {pcap_output_path}")
 
     # --------------------------------------------------
-    # Observation period
-    #
-    # Later, Windows malware execution will occur here.
-    # For this Ubuntu-only integration test, simply allow
-    # INetSim and tshark to run briefly.
+    # Generate known network traffic
     # --------------------------------------------------
+
+    print("Generating test network traffic...")
+
+    ubuntu_vm.run_bash(
+        "wget -q --spider "
+        "http://192.168.67.4:9000/minio/health/live "
+        "|| true"
+    )
+
+    # --------------------------------------------------
+    # Observation period
+    # --------------------------------------------------
+
     print(f"Collecting for {EXECUTION_SECONDS} seconds...")
-
-    print("Generating test traffic...")
-
-    ubuntu_vm.run_bash('wget -q --spider http://192.168.67.4:9000/minio/health/live || true')
-
     time.sleep(EXECUTION_SECONDS)
 
     # --------------------------------------------------
     # Stop Wireshark
     # --------------------------------------------------
+
     print("Stopping packet capture...")
 
     wireshark_runner.stop(
@@ -190,54 +262,39 @@ try:
     )
 
     if wireshark_runner.is_running(dynamic_dir):
-        raise RuntimeError(
-            "Wireshark/tshark is still running after stop"
-        )
+        raise RuntimeError("Wireshark/tshark is still running after stop")
 
     print("Packet capture stopped.")
-
-    print("Checking PCAP size immediately after Wireshark stop...")
-
-    pcap_size_after_stop = ubuntu_vm.run_bash(
-        f'stat -c %s "{pcap_output_path}"'
-    )
-
-    print(
-        f"PCAP size immediately after stop: "
-        f"{pcap_size_after_stop.strip()} bytes"
-    )
 
     # --------------------------------------------------
     # Stop INetSim
     # --------------------------------------------------
+
     print("Stopping INetSim...")
 
     inetsim_runner.stop()
 
     if inetsim_runner.is_running():
-        raise RuntimeError(
-            "INetSim is still running after stop"
-        )
+        raise RuntimeError("INetSim is still running after stop")
 
     print("INetSim stopped.")
 
     # --------------------------------------------------
-    # Collect INetSim artifacts into sample workspace
+    # Collect INetSim artifacts
     # --------------------------------------------------
+
     print("Collecting INetSim artifacts...")
 
     inetsim_output_dir = inetsim_runner.collect_artifacts(
         dynamic_dir=dynamic_dir,
     )
 
-    print(
-        f"INetSim artifact directory: "
-        f"{inetsim_output_dir}"
-    )
+    print(f"INetSim artifact directory: {inetsim_output_dir}")
 
     # --------------------------------------------------
-    # Verify PCAP exists before upload
+    # Verify PCAP exists
     # --------------------------------------------------
+
     print("Verifying PCAP artifact exists...")
 
     ubuntu_vm.run_bash(
@@ -245,8 +302,9 @@ try:
     )
 
     # --------------------------------------------------
-    # Verify INetSim directory exists before upload
+    # Verify INetSim directory exists
     # --------------------------------------------------
+
     print("Verifying INetSim artifact directory exists...")
 
     ubuntu_vm.run_bash(
@@ -256,17 +314,6 @@ try:
     # --------------------------------------------------
     # Upload Wireshark PCAP
     # --------------------------------------------------
-
-    print("Checking PCAP size immediately before MinIO upload...")
-
-    pcap_size_before_upload = ubuntu_vm.run_bash(
-        f'stat -c %s "{pcap_output_path}"'
-    )
-
-    print(
-        f"PCAP size immediately before upload: "
-        f"{pcap_size_before_upload.strip()} bytes"
-    )
 
     print("Uploading Wireshark PCAP to MinIO...")
 
@@ -281,8 +328,9 @@ try:
     print("Wireshark upload complete.")
 
     # --------------------------------------------------
-    # Upload INetSim artifacts recursively
+    # Upload INetSim directory recursively
     # --------------------------------------------------
+
     print("Uploading INetSim artifacts to MinIO...")
 
     inetsim_minio_runner.upload_directory(
@@ -296,8 +344,9 @@ try:
     print("INetSim upload complete.")
 
     # --------------------------------------------------
-    # Verify uploaded objects through MinIO aliases
+    # Verify Wireshark object
     # --------------------------------------------------
+
     print("Verifying Wireshark upload in MinIO...")
 
     pcap_destination = (
@@ -311,6 +360,10 @@ try:
     ubuntu_vm.run_bash(
         f'mc stat "{pcap_destination}"'
     )
+
+    # --------------------------------------------------
+    # Verify INetSim objects
+    # --------------------------------------------------
 
     print("Verifying INetSim upload in MinIO...")
 
@@ -329,39 +382,61 @@ try:
     # --------------------------------------------------
     # Final result
     # --------------------------------------------------
+
     print()
-    print("=== Ubuntu Dynamic Upload Test ===")
+    print("=== Ubuntu Dynamic Integration Test ===")
     print(f"sample_id: {SAMPLE_ID}")
     print(f"variant: {SAMPLE_VARIANT}")
     print(f"sha256: {SHA256}")
     print(f"dynamic_dir: {dynamic_dir}")
     print(f"pcap_output_path: {pcap_output_path}")
     print(f"inetsim_output_dir: {inetsim_output_dir}")
+    print("datapool_vm_ready: True")
+    print("ubuntu_vm_ready: True")
+    print("minio_ready: True")
     print("wireshark_upload_complete: True")
     print("inetsim_upload_complete: True")
 
 
 finally:
     # --------------------------------------------------
-    # Best-effort service cleanup
+    # Best-effort INetSim cleanup
     # --------------------------------------------------
-    try:
-        if inetsim_runner.is_running():
-            inetsim_runner.stop()
-    except Exception:
-        pass
 
-    try:
-        if wireshark_runner.is_running(dynamic_dir):
-            wireshark_runner.stop(dynamic_dir)
-    except Exception:
-        pass
+    if inetsim_runner is not None:
+        try:
+            if inetsim_runner.is_running():
+                inetsim_runner.stop()
+        except Exception:
+            pass
 
     # --------------------------------------------------
-    # Only stop VM if this script originally started it
+    # Best-effort Wireshark cleanup
     # --------------------------------------------------
+
+    if wireshark_runner is not None and dynamic_dir is not None:
+        try:
+            if wireshark_runner.is_running(dynamic_dir):
+                wireshark_runner.stop(dynamic_dir)
+        except Exception:
+            pass
+
+    # --------------------------------------------------
+    # Stop Ubuntu only if test started it
+    # --------------------------------------------------
+
     if not ubuntu_was_running:
         try:
             ubuntu_vm.stop()
+        except RuntimeError:
+            pass
+
+    # --------------------------------------------------
+    # Stop Debian only if test started it
+    # --------------------------------------------------
+
+    if not datapool_was_running:
+        try:
+            datapool.stop()
         except RuntimeError:
             pass

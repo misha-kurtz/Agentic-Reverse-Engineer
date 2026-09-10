@@ -1,7 +1,7 @@
 # binary-eval/controller/state.py
 
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 
 @dataclass
 class AnalysisState:
@@ -16,7 +16,7 @@ class AnalysisState:
     guest_sample_path: PurePosixPath
     guest_static_dir: PurePosixPath
 
-    # Analysis and artifact output paths 
+    # REMnux static analysis artifact output paths 
     pe_metadata_path: PurePosixPath | None = None
     floss_output_path: PurePosixPath | None = None
     capa_output_path: PurePosixPath | None = None
@@ -54,17 +54,17 @@ class AnalysisState:
     recovery_policy: str | None = None
 
     # Dynamic paths
-    windows_dynamic_dir: str | None = None
+    windows_dynamic_dir: PureWindowsPath | None = None
     ubuntu_dynamic_dir: PurePosixPath | None = None
 
-    # Ubuntu dynamic artifacts
+    # Ubuntu dynamic analysis artifact output paths
     pcap_output_path: PurePosixPath | None = None
     inetsim_output_dir: PurePosixPath | None = None
 
-    # Windows dynamic artifacts
-    regshot_output_path: str | None = None
-    noriben_output_path: str | None = None
-    sysmon_output_path: str | None = None
+    # Windows dynamic analysis artifact output paths
+    regshot_output_path: PureWindowsPath | None = None
+    noriben_output_path: PureWindowsPath | None = None
+    sysmon_output_path: PureWindowsPath | None = None
 
     # Collection status
     inetsim_running: bool = False

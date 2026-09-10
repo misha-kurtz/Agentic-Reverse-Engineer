@@ -71,7 +71,7 @@ class MinioDynamicRunner:
 
         command = (
             f'mc cp --recursive '
-            f'"{guest_directory_path}" '
+            f'"{guest_directory_path}/" '
             f'"{destination}"'
         )
 
