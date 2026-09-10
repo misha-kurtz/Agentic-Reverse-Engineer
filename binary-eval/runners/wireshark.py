@@ -42,15 +42,10 @@ class WiresharkRunner:
         dynamic_dir: PurePosixPath,
     ) -> bool:
 
-        pid_file = dynamic_dir / "tshark.pid"
-
-        command = (
-            f'test -f "{pid_file}" && '
-            f'kill -0 "$(cat "{pid_file}")"'
-        )
-
         try:
-            self.ubuntu_vm.run_bash(command)
+            self.ubuntu_vm.run_bash(
+                "pgrep -x tshark > /dev/null"
+            )
             return True
 
         except RuntimeError:
@@ -64,15 +59,11 @@ class WiresharkRunner:
         pid_file = dynamic_dir / "tshark.pid"
 
         command = (
-            f'if [ -f "{pid_file}" ]; then '
-            f'pid="$(cat "{pid_file}")"; '
-            f'kill "$pid" 2>/dev/null || true; '
-            f'while kill -0 "$pid" 2>/dev/null; do '
-            f'sleep 0.2; '
-            f'done; '
+            'pkill -TERM -x tshark 2>/dev/null || true; '
+            'pkill -TERM -x dumpcap 2>/dev/null || true; '
+            'sleep 1; '
             f'rm -f "{pid_file}"; '
-            f'fi; '
-            f'sync'
+            'sync'
         )
 
         self.ubuntu_vm.run_bash(command)

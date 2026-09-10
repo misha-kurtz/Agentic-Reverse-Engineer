@@ -170,9 +170,11 @@ try:
     # For this Ubuntu-only integration test, simply allow
     # INetSim and tshark to run briefly.
     # --------------------------------------------------
-    print(
-        f"Collecting for {EXECUTION_SECONDS} seconds..."
-    )
+    print(f"Collecting for {EXECUTION_SECONDS} seconds...")
+
+    print("Generating test traffic...")
+
+    ubuntu_vm.run_bash('wget -q --spider http://192.168.67.4:9000/minio/health/live || true')
 
     time.sleep(EXECUTION_SECONDS)
 
@@ -191,6 +193,17 @@ try:
         )
 
     print("Packet capture stopped.")
+
+    print("Checking PCAP size immediately after Wireshark stop...")
+
+    pcap_size_after_stop = ubuntu_vm.run_bash(
+        f'stat -c %s "{pcap_output_path}"'
+    )
+
+    print(
+        f"PCAP size immediately after stop: "
+        f"{pcap_size_after_stop.strip()} bytes"
+    )
 
     # --------------------------------------------------
     # Stop INetSim
@@ -241,6 +254,18 @@ try:
     # --------------------------------------------------
     # Upload Wireshark PCAP
     # --------------------------------------------------
+
+    print("Checking PCAP size immediately before MinIO upload...")
+
+    pcap_size_before_upload = ubuntu_vm.run_bash(
+        f'stat -c %s "{pcap_output_path}"'
+    )
+
+    print(
+        f"PCAP size immediately before upload: "
+        f"{pcap_size_before_upload.strip()} bytes"
+    )
+
     print("Uploading Wireshark PCAP to MinIO...")
 
     pcap_minio_runner.upload(
