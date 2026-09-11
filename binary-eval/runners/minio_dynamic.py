@@ -61,18 +61,36 @@ class MinioDynamicRunner:
         directory_name: str,
     ) -> None:
 
-        destination = (
-            f"{self.alias}/dynamic/"
-            f"{sample_id}/"
-            f"{sample_variant}/"
-            f"{sha256}/"
-        )
+        if self.platform == "linux":
+            source = f'{guest_directory_path}/*'
 
-        command = (
-            f'mc cp --recursive '
-            f'"{guest_directory_path}/" '
-            f'"{destination}"'
-        )
+            destination = (
+                f"{self.alias}/dynamic/"
+                f"{sample_id}/"
+                f"{sample_variant}/"
+                f"{sha256}/"
+                f"{directory_name}/"
+            )
+
+            command = (
+                f'mc cp --recursive '
+                f'{source} '
+                f'"{destination}"'
+            )
+
+        else:
+            destination = (
+                f"{self.alias}/dynamic/"
+                f"{sample_id}/"
+                f"{sample_variant}/"
+                f"{sha256}/"
+            )
+
+            command = (
+                f'mc cp --recursive '
+                f'"{guest_directory_path}" '
+                f'"{destination}"'
+            )
 
         self._run(command)
 

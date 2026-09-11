@@ -46,3 +46,50 @@ binary-eval/
 │
 └── main.py
 ```
+
+
+``` console
+REMnux VM control                          ✓
+Debian VM control                          ✓
+MinIO readiness                            ✓
+Presigned URL generation                   ✓
+REMnux sample download via URL             ✓
+REMnux SHA256 verification                 ✓
+
+PE metadata extraction runner              ✓
+FLOSS string extraction runner             ✓
+Capa capabilities runner                   ✓
+Ghidra artifacts export script             ✓
+Ghidra runner                              ✓
+Static artifact upload from REMnux         ✓
+Wire static analysis into controller       ✓
+
+Packer detection                           ✓
+Encryption detection                       ✓
+Detection workflow complete                ✓
+
+Windows VM control                         ✓
+PowerShell execution                       ✓
+Windows sample download via URL            ✓
+Windows SHA256 verification                ✓
+
+Ubuntu VM control                          ✓
+Ubuntu dynamic workspace cleanup           ✓
+Ubuntu dynamic workspace creation          ✓
+```
+
+``` console
+INetSim runner                             ✓
+Wireshark/tshark runner                    ✓
+Regshot runner                             ✓
+Noriben/Procmon runner                     ✓
+Sysmon runner                              ✓
+Windows malware execution lifecycle        ✓
+Dynamic artifact upload from Windows       ✓
+Dynamic artifact upload from Ubuntu        ✓
+Wire dynamic workflow into controller      ✗
+
+Automated payload unpacking from memory    ✗
+Automated payload decryption from memory   ✗
+Recovery workflow                          ✗
+```

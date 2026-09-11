@@ -55,15 +55,8 @@ class WindowsDispatchRunner:
         )
 
         self.windows_vm.run_powershell(
-            f'Remove-Item "{guest_sample_dir}" '
-            f'-Recurse -Force -ErrorAction SilentlyContinue'
-        )
-
-    def execute_sample(
-        self,
-        guest_sample_path: PureWindowsPath,
-    ) -> None:
-
-        self.windows_vm.run_program(
-            str(guest_sample_path)
+            f'if (Test-Path -LiteralPath "{guest_sample_dir}") {{ '
+            f'Remove-Item -LiteralPath "{guest_sample_dir}" '
+            f'-Recurse -Force '
+            f'}}'
         )
