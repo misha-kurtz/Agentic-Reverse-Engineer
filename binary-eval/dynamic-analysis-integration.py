@@ -193,6 +193,7 @@ try:
 
     print("Waiting for Windows guest...")
     windows_vm.wait_for_guest(shell="windows")
+    windows_vm.wait_for_windows_desktop()
     print("Windows guest is ready.")
 
     # --------------------------------------------------

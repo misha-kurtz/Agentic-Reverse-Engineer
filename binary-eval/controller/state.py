@@ -52,8 +52,11 @@ class AnalysisState:
 
     # Recovery policy
     recovery_policy: str | None = None
+    recovery_required: bool = False
+    recovery_strategy: str | None = None
 
     # Dynamic paths
+    windows_sample_path: PureWindowsPath | None = None
     windows_dynamic_dir: PureWindowsPath | None = None
     ubuntu_dynamic_dir: PurePosixPath | None = None
 
@@ -62,8 +65,8 @@ class AnalysisState:
     inetsim_output_dir: PurePosixPath | None = None
 
     # Windows dynamic analysis artifact output paths
+    noriben_output_dir: PureWindowsPath | None = None
     regshot_output_path: PureWindowsPath | None = None
-    noriben_output_path: PureWindowsPath | None = None
     sysmon_output_path: PureWindowsPath | None = None
 
     # Collection status
@@ -78,7 +81,7 @@ class AnalysisState:
     dynamic_sha256_verified: bool = False
     sample_executed: bool = False
 
-    # Upload status 
+    # Upload status
     inetsim_upload_complete: bool = False
     wireshark_upload_complete: bool = False
     noriben_upload_complete: bool = False
@@ -89,9 +92,6 @@ class AnalysisState:
 
 
 '''
-    # Recovery
-    recovery_required: bool = False
-    recovery_strategy: str | None = None
     recovery_attempted: bool = False
     recovery_successful: bool = False
 

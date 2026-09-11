@@ -1,14 +1,20 @@
 # binary-eval/controller/controller.py
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from controller.state import AnalysisState
-from runners.minio_dispatch import MinioDispatchRunner
-from runners.remnux_dispatch import RemnuxDispatchRunner
-from workflows.static_analysis import StaticAnalysisWorkflow
-from workflows.dynamic_analysis import DynamicAnalysisWorkflow
 from controller.policy import choose_recovery_policy
 from controller.decisions import RecoveryPolicy
+from controller.state import AnalysisState
+
+from runners.minio_dispatch import MinioDispatchRunner
+from runners.remnux_dispatch import RemnuxDispatchRunner
+from runners.windows_dispatch import WindowsDispatchRunner
+from runners.ubuntu import UbuntuRunner
+
+from workflows.static_analysis import StaticAnalysisWorkflow
+from workflows.dynamic_analysis import DynamicAnalysisWorkflow
+
+
 
 
 class AnalysisController:
@@ -16,12 +22,17 @@ class AnalysisController:
         self,
         minio_dispatch: MinioDispatchRunner,
         remnux_dispatch: RemnuxDispatchRunner,
+        windows_dispatch: WindowsDispatchRunner,
+        ubuntu_runner: UbuntuRunner,
         static_analysis_workflow: StaticAnalysisWorkflow,
         detection_workflow,
         dynamic_analysis_workflow: DynamicAnalysisWorkflow | None = None,
     ):
         self.minio_dispatch = minio_dispatch
         self.remnux_dispatch = remnux_dispatch
+        self.windows_dispatch = windows_dispatch
+        self.ubuntu_runner = ubuntu_runner
+
         self.static_analysis_workflow = static_analysis_workflow
         self.detection_workflow = detection_workflow
         self.dynamic_analysis_workflow = dynamic_analysis_workflow
@@ -155,13 +166,81 @@ class AnalysisController:
 
         return state
 
+    
+    # --------------------------------------------------
+    # Download malware sample from Debian MinIO server to 
+    # Windows VM and verify against expected SHA256 hash.
+    # --------------------------------------------------
+    def prepare_dynamic_sample(
+        self,
+        state: AnalysisState,
+    ) -> AnalysisState:
+
+        if state.presigned_url is None:
+            raise RuntimeError(
+                "Presigned sample URL is not available"
+            )
+
+        state.windows_sample_path = PureWindowsPath(
+            rf"C:\binary-eval\work\{state.sample_id}"
+            rf"\{state.sample_variant}\{state.sha256}"
+            rf"\sample.exe"
+        )
+
+        state.windows_dynamic_dir = PureWindowsPath(
+            rf"C:\binary-eval\work\{state.sample_id}"
+            rf"\{state.sample_variant}\{state.sha256}"
+            rf"\dynamic"
+        )
+
+        # Clean previous Windows workspace
+        self.windows_dispatch.clean_sample_workspace(
+            sample_id=state.sample_id,
+            sample_variant=state.sample_variant,
+            sha256=state.sha256,
+        )
+
+        # Clean previous Ubuntu workspace
+        self.ubuntu_runner.clean_dynamic_workspace(
+            sample_id=state.sample_id,
+            sample_variant=state.sample_variant,
+            sha256=state.sha256,
+        )
+
+        # Clean previous MinIO dynamic artifacts
+        self.dynamic_analysis_workflow.clean_artifacts(
+            sample_id=state.sample_id,
+            sample_variant=state.sample_variant,
+            sha256=state.sha256,
+        )
+
+        # Prepare Ubuntu workspace
+        state.ubuntu_dynamic_dir = (
+            self.ubuntu_runner.prepare_dynamic_workspace(
+                sample_id=state.sample_id,
+                sample_variant=state.sample_variant,
+                sha256=state.sha256,
+            )
+        )
+
+        # Download sample to Windows
+        self.windows_dispatch.download_and_verify(
+            presigned_url=state.presigned_url,
+            expected_sha256=state.sha256,
+            guest_sample_path=state.windows_sample_path,
+        )
+
+        state.dynamic_sample_downloaded = True
+        state.dynamic_sha256_verified = True
+
+        return state
+
     # --------------------------------------------------
     # Run baseline dynamic analysis for every sample.
     # --------------------------------------------------
     def run_dynamic_analysis(
         self,
         state: AnalysisState,
-        presigned_url: str,
         execution_seconds: int = 60,
     ) -> AnalysisState:
 
@@ -171,7 +250,6 @@ class AnalysisController:
             )
 
         return self.dynamic_analysis_workflow.run(
-            state=state,
-            presigned_url=presigned_url,
+            state,
             execution_seconds=execution_seconds,
         )

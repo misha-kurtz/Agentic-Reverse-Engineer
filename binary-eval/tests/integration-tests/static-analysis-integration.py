@@ -1,4 +1,3 @@
-# agentic-reverse-engineer/main.py
 import sys
 from pathlib import Path, PurePosixPath
 

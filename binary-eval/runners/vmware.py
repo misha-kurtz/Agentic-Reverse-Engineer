@@ -1,5 +1,5 @@
 # binary-eval/runners/vmware.py
-
+import time
 import os
 import subprocess
 import time
@@ -101,6 +101,31 @@ class VMwareRunner:
             f"Last error:\n{last_error}"
         )
 
+    def wait_for_windows_desktop(
+        self,
+        timeout: int = 60,
+        interval: int = 2,
+    ) -> None:
+
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            try:
+                self.run_powershell(
+                    '$explorer = Get-Process '
+                    '-Name explorer '
+                    '-ErrorAction SilentlyContinue; '
+                    'if (-not $explorer) { exit 1 }'
+                )
+                return
+
+            except RuntimeError:
+                time.sleep(interval)
+
+        raise RuntimeError(
+            "Windows interactive desktop did not become ready"
+        )
+
     def run_bash(self, command: str) -> str:
         """
         Execute a Bash command inside the guest.
@@ -138,6 +163,8 @@ class VMwareRunner:
         result = self._run(args)
 
         return result.stdout
+
+    
 
     def run_powershell(self, command: str) -> str:
         encoded_command = base64.b64encode(

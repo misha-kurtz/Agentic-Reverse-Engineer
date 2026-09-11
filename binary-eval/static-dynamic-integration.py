@@ -1,6 +1,6 @@
 # agentic-reverse-engineer/main.py
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from controller.controller import AnalysisController
 
@@ -12,9 +12,18 @@ from runners.minio_artifacts import MinioArtifactRunner
 from runners.floss import FLOSSRunner
 from runners.capa import CAPARunner
 from runners.ghidra import GhidraRunner
+from runners.windows_dispatch import WindowsDispatchRunner
+from runners.ubuntu import UbuntuRunner
+from runners.inetsim import INetSimRunner
+from runners.wireshark import WiresharkRunner
+from runners.noriben import NoribenRunner
+from runners.regshot import RegshotRunner
+from runners.sysmon import SysmonRunner
+from runners.minio_dynamic import MinioDynamicRunner
 
 from workflows.static_analysis import StaticAnalysisWorkflow
 from workflows.detection import DetectionWorkflow
+from workflows.dynamic_analysis import DynamicAnalysisWorkflow
 
 SAMPLE_ID = "B001"
 
@@ -46,12 +55,21 @@ if SAMPLE_VARIANT not in SAMPLES:
 SHA256 = SAMPLES[SAMPLE_VARIANT]
 
 
+# --------------------------------------------------
+# Debian Datapool VM
+# --------------------------------------------------
+
 datapool_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\Debian 12.x 64-bit Data Pool Server\Debian 12.x 64-bit Data Pool Server\Debian 12.x 64-bit Data Pool Server.vmx",
     guest_username="kurtz",
     password_env_var="DATAPOOL_GUEST_PASSWORD",
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
+
+
+# --------------------------------------------------
+# REMnux Linux Static Analysis VM
+# --------------------------------------------------
 
 remnux_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\REMnux Linux\REMnux Linux\REMnux Linux.vmx",
@@ -60,6 +78,21 @@ remnux_vm = VMwareRunner(
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 
+# --------------------------------------------------
+# Ubuntu INetSim / Gateway VM
+# --------------------------------------------------
+
+ubuntu_vm = VMwareRunner(
+    vmx_path=r"D:\Virtual Machines\Ubuntu 64-bit Inetsim-Gateway\Ubuntu 64-bit Inetsim-Gateway\Ubuntu 64-bit Inetsim-Gateway.vmx",
+    guest_username="kurtz",
+    password_env_var="UBUNTU_GUEST_PASSWORD",
+    vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
+)
+
+# --------------------------------------------------
+# Windows Dynamic Analysis VM
+# --------------------------------------------------
+
 windows_vm = VMwareRunner(
     vmx_path=r"D:\Virtual Machines\Windows 11 x64\Windows 11 x64\Windows 11 x64.vmx",
     guest_username=r".\misha.kurtz",
@@ -67,20 +100,25 @@ windows_vm = VMwareRunner(
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 
+
 datapool_was_running = datapool_vm.is_running()
 remnux_was_running = remnux_vm.is_running()
+ubuntu_was_running = ubuntu_vm.is_running()
+windows_was_running = windows_vm.is_running()
 
-#success = False
 
 try:
     datapool_vm.start()
     remnux_vm.start()
-
-    #datapool_vm.start(nogui=False)
-    #remnux_vm.start()
+    ubuntu_vm.start()
+    windows_vm.start(nogui=False)
 
     datapool_vm.wait_for_guest()
     remnux_vm.wait_for_guest()
+    ubuntu_vm.wait_for_guest()
+    windows_vm.wait_for_guest(
+        shell="windows",
+    )
 
     ghidra_runner = GhidraRunner(
         remnux_vm=remnux_vm,
@@ -92,14 +130,76 @@ try:
         ),
     )
 
+    
+    # --------------------------------------------------
+    # Instantiate core runners
+    # --------------------------------------------------
+
     minio_dispatch = MinioDispatchRunner(datapool_vm)
+    minio_dispatch.wait_for_minio()
+
     remnux_dispatch = RemnuxDispatchRunner(remnux_vm)
     minio_artifact_runner = MinioArtifactRunner(remnux_vm)
     pefile_runner = PEFileRunner(remnux_vm)
     floss_runner = FLOSSRunner(remnux_vm)
     capa_runner = CAPARunner(remnux_vm)
 
-    minio_dispatch.wait_for_minio()
+    windows_dispatch = WindowsDispatchRunner(
+        windows_vm=windows_vm,
+    )
+
+    ubuntu_runner = UbuntuRunner(
+        ubuntu_vm=ubuntu_vm,
+    )
+
+    inetsim_runner = INetSimRunner(
+        ubuntu_vm=ubuntu_vm,
+    )
+
+    wireshark_runner = WiresharkRunner(
+        ubuntu_vm=ubuntu_vm,
+        interface="ens33",
+    )
+
+    noriben_runner = NoribenRunner(
+        windows_vm=windows_vm,
+        python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
+        noriben_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Noriben\Noriben.py"),
+    )
+
+    regshot_runner = RegshotRunner(
+        windows_vm=windows_vm,
+        python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
+        regshot_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Regshot-1.9.0\Regshot-x64-Unicode.exe"),
+    )
+
+    sysmon_runner = SysmonRunner(windows_vm=windows_vm)
+
+    # --------------------------------------------------
+    # Instantiate MinIO dynamic upload runners
+    # --------------------------------------------------
+
+    inetsim_minio_runner = MinioDynamicRunner(
+        vm=ubuntu_vm,
+        alias="datapool-inetsim",
+        platform="linux",
+    )
+
+    pcap_minio_runner = MinioDynamicRunner(
+        vm=ubuntu_vm,
+        alias="datapool-pcap",
+        platform="linux",
+    )
+
+    windows_minio_runner = MinioDynamicRunner(
+        vm=windows_vm,
+        alias="datapool",
+        platform="windows",
+    )
+
+    # --------------------------------------------------
+    # Instantiate workflows
+    # --------------------------------------------------
 
     static_analysis_workflow = StaticAnalysisWorkflow(
         pefile_runner=pefile_runner,
@@ -111,13 +211,31 @@ try:
 
     detection_workflow = DetectionWorkflow(
     remnux_vm=remnux_vm,
-)
+    )
 
+    dynamic_analysis_workflow = DynamicAnalysisWorkflow(
+        windows_vm=windows_vm,
+        inetsim_runner=inetsim_runner,
+        wireshark_runner=wireshark_runner,
+        noriben_runner=noriben_runner,
+        regshot_runner=regshot_runner,
+        sysmon_runner=sysmon_runner,
+        inetsim_minio_runner=inetsim_minio_runner,
+        pcap_minio_runner=pcap_minio_runner,
+        windows_minio_runner=windows_minio_runner,
+    )
+
+    # --------------------------------------------------
+    # Instantiate controller
+    # --------------------------------------------------
     controller = AnalysisController(
         minio_dispatch=minio_dispatch,
         remnux_dispatch=remnux_dispatch,
+        windows_dispatch=windows_dispatch,
+        ubuntu_runner=ubuntu_runner,
         static_analysis_workflow=static_analysis_workflow,
         detection_workflow=detection_workflow,
+        dynamic_analysis_workflow=dynamic_analysis_workflow,
     )
 
     print("=== Selected Sample ===")
@@ -126,7 +244,14 @@ try:
     print(f"sha256: {SHA256}")
     print()
 
-    # Execution flow: prepare sample -> run static analysis -> run detection -> apply policy
+    # Execution flow:
+    # prepare static sample
+    # -> static analysis
+    # -> detection
+    # -> recovery policy
+    # -> prepare dynamic sample
+    # -> dynamic analysis
+
     state = controller.prepare_sample(
         sample_id=SAMPLE_ID,
         sha256=SHA256,
@@ -145,7 +270,13 @@ try:
 
     state = controller.apply_policy(state)
 
-    #success = True
+    state = controller.prepare_dynamic_sample(state)
+
+    state = controller.run_dynamic_analysis(
+        state,
+        execution_seconds=60,
+    )
+
     
     print(f"sample_id: {state.sample_id}")
     print(f"variant: {state.sample_variant}")
@@ -191,15 +322,40 @@ try:
     print(f"recovery_policy: {state.recovery_policy}")
     print(f"recovery_required: {state.recovery_required}")
     print(f"recovery_strategy: {state.recovery_strategy}")
-# finally:
-#     if success:
-#         if not remnux_was_running:
-#             remnux_vm.stop()
-#
-#         if not datapool_was_running:
-#             datapool_vm.stop()
+
+    print()
+    print("=== Dynamic Analysis ===")
+
+    print(f"dynamic_sample_downloaded: {state.dynamic_sample_downloaded}")
+    print(f"dynamic_sha256_verified: {state.dynamic_sha256_verified}")
+    print(f"windows_sample_path: {state.windows_sample_path}")
+    print(f"ubuntu_dynamic_dir: {state.ubuntu_dynamic_dir}")
+    print(f"windows_dynamic_dir: {state.windows_dynamic_dir}")
+    print(f"sample_executed: {state.sample_executed}")
+    print(f"pcap_output_path: {state.pcap_output_path}")
+    print(f"inetsim_output_dir: {state.inetsim_output_dir}")
+    print(f"noriben_output_dir: {state.noriben_output_dir}")
+    print(f"regshot_output_path: {state.regshot_output_path}")
+    print(f"sysmon_output_path: {state.sysmon_output_path}")
+    print(f"wireshark_upload_complete: {state.wireshark_upload_complete}")
+    print(f"inetsim_upload_complete: {state.inetsim_upload_complete}")
+    print(f"noriben_upload_complete: {state.noriben_upload_complete}")
+    print(f"regshot_upload_complete: {state.regshot_upload_complete}")
+    print(f"sysmon_upload_complete: {state.sysmon_upload_complete}")
 
 finally:
+    if not windows_was_running:
+        try:
+            windows_vm.stop()
+        except RuntimeError:
+            pass
+
+    if not ubuntu_was_running:
+        try:
+            ubuntu_vm.stop()
+        except RuntimeError:
+            pass
+
     if not remnux_was_running:
         try:
             remnux_vm.stop()
