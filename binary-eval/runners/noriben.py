@@ -1,4 +1,5 @@
 # binary-eval/runners/noriben.py
+
 import time
 from pathlib import PureWindowsPath
 
@@ -11,10 +12,12 @@ class NoribenRunner:
         windows_vm: VMwareRunner,
         python_path: PureWindowsPath,
         noriben_path: PureWindowsPath,
+        procmon_config_path: PureWindowsPath,
     ):
         self.windows_vm = windows_vm
         self.python_path = python_path
         self.noriben_path = noriben_path
+        self.procmon_config_path = procmon_config_path
 
     def prepare_output_dir(
         self,
@@ -30,27 +33,42 @@ class NoribenRunner:
         )
 
         self.windows_vm.run_powershell(
-            f'New-Item -ItemType Directory -Force -Path "{output_dir}" | Out-Null'
+            f'New-Item -ItemType Directory -Force '
+            f'-Path "{output_dir}" | Out-Null'
         )
 
         return output_dir
 
+    def verify_config(self) -> None:
+        command = (
+            f'if (-not (Test-Path "{self.procmon_config_path}")) {{ '
+            f'throw "Procmon configuration file not found: '
+            f'{self.procmon_config_path}" '
+            f'}}'
+        )
+
+        self.windows_vm.run_powershell(command)
+
     def start(
         self,
         output_dir: PureWindowsPath,
-        timeout: int = 60,
+        capture_seconds: int,
     ) -> None:
+
+        self.verify_config()
 
         arguments = (
             f'"{self.noriben_path}" '
             f'--headless '
             f'--debug '
-            f'-t {timeout} '
+            f'-t {capture_seconds} '
+            f'-f "{self.procmon_config_path}" '
             f'--output "{output_dir}"'
         )
 
         command = (
-            f'Start-Process -FilePath "{self.python_path}" '
+            f'Start-Process '
+            f'-FilePath "{self.python_path}" '
             f'-ArgumentList \'{arguments}\' '
             f'-WindowStyle Hidden'
         )
@@ -73,10 +91,9 @@ class NoribenRunner:
         except RuntimeError:
             return False
 
-
     def wait_for_completion(
         self,
-        timeout: int = 90,
+        timeout: int = 300,
         interval: int = 2,
     ) -> None:
 
@@ -93,7 +110,6 @@ class NoribenRunner:
         )
 
     def stop(self) -> None:
-
         command = (
             '$noriben = Get-CimInstance Win32_Process '
             '| Where-Object { '
@@ -102,7 +118,8 @@ class NoribenRunner:
             'foreach ($process in $noriben) { '
             'Stop-Process -Id $process.ProcessId -Force '
             '}; '
-            '$procmon = Get-Process -Name Procmon,Procmon64 '
+            '$procmon = Get-Process '
+            '-Name Procmon,Procmon64 '
             '-ErrorAction SilentlyContinue; '
             'if ($procmon) { '
             '& "$($procmon[0].Path)" /Terminate '

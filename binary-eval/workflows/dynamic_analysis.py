@@ -1,3 +1,5 @@
+# binary-eval/workflows/dynamic_analysis.py
+
 import time
 
 from controller.state import AnalysisState
@@ -15,7 +17,8 @@ class DynamicAnalysisWorkflow:
         inetsim_minio_runner,
         pcap_minio_runner,
         windows_minio_runner,
-        noriben_timeout: int = 120,
+        noriben_capture_padding_seconds: int = 5,
+        noriben_completion_timeout: int = 300,
     ):
         self.windows_vm = windows_vm
         self.inetsim_runner = inetsim_runner
@@ -28,7 +31,13 @@ class DynamicAnalysisWorkflow:
         self.pcap_minio_runner = pcap_minio_runner
         self.windows_minio_runner = windows_minio_runner
 
-        self.noriben_timeout = noriben_timeout
+        self.noriben_capture_padding_seconds = (
+            noriben_capture_padding_seconds
+        )
+
+        self.noriben_completion_timeout = (
+            noriben_completion_timeout
+        )
 
     def run(
         self,
@@ -62,7 +71,10 @@ class DynamicAnalysisWorkflow:
         )
 
         try:
+            # --------------------------------------------------
             # Verify Sysmon
+            # --------------------------------------------------
+
             if not self.sysmon_runner.is_installed():
                 raise RuntimeError(
                     "Sysmon is not installed"
@@ -70,7 +82,10 @@ class DynamicAnalysisWorkflow:
 
             state.sysmon_verified = True
 
+            # --------------------------------------------------
             # Start INetSim
+            # --------------------------------------------------
+
             self.inetsim_runner.start(
                 dynamic_dir=state.ubuntu_dynamic_dir,
             )
@@ -82,7 +97,10 @@ class DynamicAnalysisWorkflow:
 
             state.inetsim_running = True
 
+            # --------------------------------------------------
             # Start packet capture
+            # --------------------------------------------------
+
             state.pcap_output_path = (
                 self.wireshark_runner.start(
                     dynamic_dir=state.ubuntu_dynamic_dir,
@@ -100,21 +118,39 @@ class DynamicAnalysisWorkflow:
 
             state.packet_capture_running = True
 
+            # --------------------------------------------------
             # Clear Sysmon
+            # --------------------------------------------------
+
             self.sysmon_runner.clear_log()
 
+            # --------------------------------------------------
             # Regshot snapshot 1
+            # --------------------------------------------------
+
             self.regshot_runner.start(
                 output_dir=state.regshot_output_dir,
             )
 
             self.regshot_runner.take_first_snapshot()
+
             state.regshot_running = True
 
-            # Start Noriben
+            # --------------------------------------------------
+            # Start Noriben / Procmon
+            #
+            # Noriben starts before the malware, so give it a
+            # small amount of extra collection time.
+            # --------------------------------------------------
+
+            noriben_capture_seconds = (
+                execution_seconds
+                + self.noriben_capture_padding_seconds
+            )
+
             self.noriben_runner.start(
                 output_dir=state.noriben_output_dir,
-                timeout=self.noriben_timeout,
+                capture_seconds=noriben_capture_seconds,
             )
 
             time.sleep(3)
@@ -126,7 +162,10 @@ class DynamicAnalysisWorkflow:
 
             state.noriben_running = True
 
+            # --------------------------------------------------
             # Execute malware
+            # --------------------------------------------------
+
             self.windows_vm.run_powershell(
                 f'Start-Process -FilePath '
                 f'"{state.windows_sample_path}"'
@@ -134,17 +173,38 @@ class DynamicAnalysisWorkflow:
 
             state.sample_executed = True
 
-            # Observation window
+            # --------------------------------------------------
+            # Malware observation window
+            # --------------------------------------------------
+
             time.sleep(execution_seconds)
 
-            # Finish Noriben
+            # --------------------------------------------------
+            # Wait for Noriben post-processing
+            #
+            # At this point the observation window is complete.
+            # Noriben may still need time to:
+            #
+            #   - terminate Procmon
+            #   - finalize the PML
+            #   - convert PML -> CSV
+            #   - parse the CSV
+            #   - generate its reports
+            #
+            # This timeout is therefore intentionally separate
+            # from the malware execution/collection duration.
+            # --------------------------------------------------
+
             self.noriben_runner.wait_for_completion(
-                timeout=self.noriben_timeout + 60,
+                timeout=self.noriben_completion_timeout,
             )
 
             state.noriben_running = False
 
+            # --------------------------------------------------
             # Regshot snapshot 2 + comparison
+            # --------------------------------------------------
+
             self.regshot_runner.take_second_snapshot()
 
             state.regshot_output_path = (
@@ -155,32 +215,48 @@ class DynamicAnalysisWorkflow:
 
             state.regshot_running = False
 
+            # --------------------------------------------------
             # Export Sysmon
+            # --------------------------------------------------
+
             state.sysmon_output_path = (
                 self.sysmon_runner.export_log(
                     output_dir=state.sysmon_output_dir,
                 )
             )
 
+            # --------------------------------------------------
             # Stop tshark
+            # --------------------------------------------------
+
             self.wireshark_runner.stop(
                 dynamic_dir=state.ubuntu_dynamic_dir,
             )
 
             state.packet_capture_running = False
 
+            # --------------------------------------------------
             # Stop INetSim
+            # --------------------------------------------------
+
             self.inetsim_runner.stop()
+
             state.inetsim_running = False
 
+            # --------------------------------------------------
             # Collect INetSim artifacts
+            # --------------------------------------------------
+
             state.inetsim_output_dir = (
                 self.inetsim_runner.collect_artifacts(
                     dynamic_dir=state.ubuntu_dynamic_dir,
                 )
             )
 
+            # --------------------------------------------------
             # Upload PCAP
+            # --------------------------------------------------
+
             self.pcap_minio_runner.upload(
                 guest_artifact_path=state.pcap_output_path,
                 sample_id=state.sample_id,
@@ -191,7 +267,10 @@ class DynamicAnalysisWorkflow:
 
             state.wireshark_upload_complete = True
 
+            # --------------------------------------------------
             # Upload INetSim
+            # --------------------------------------------------
+
             self.inetsim_minio_runner.upload_directory(
                 guest_directory_path=state.inetsim_output_dir,
                 sample_id=state.sample_id,
@@ -202,7 +281,10 @@ class DynamicAnalysisWorkflow:
 
             state.inetsim_upload_complete = True
 
+            # --------------------------------------------------
             # Upload Noriben
+            # --------------------------------------------------
+
             self.windows_minio_runner.upload_directory(
                 guest_directory_path=state.noriben_output_dir,
                 sample_id=state.sample_id,
@@ -213,7 +295,10 @@ class DynamicAnalysisWorkflow:
 
             state.noriben_upload_complete = True
 
+            # --------------------------------------------------
             # Upload Regshot
+            # --------------------------------------------------
+
             self.windows_minio_runner.upload(
                 guest_artifact_path=state.regshot_output_path,
                 sample_id=state.sample_id,
@@ -227,7 +312,10 @@ class DynamicAnalysisWorkflow:
 
             state.regshot_upload_complete = True
 
+            # --------------------------------------------------
             # Upload Sysmon
+            # --------------------------------------------------
+
             self.windows_minio_runner.upload(
                 guest_artifact_path=state.sysmon_output_path,
                 sample_id=state.sample_id,

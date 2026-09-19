@@ -159,6 +159,7 @@ try:
         windows_vm=windows_vm,
         python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Microsoft\WindowsApps\python.exe"),
         noriben_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Noriben\Noriben.py"),
+        procmon_config_path=PureWindowsPath(r"C:\Users\misha.kurtz\dynamic_analysis\Noriben\ProcmonConfiguration.PMC"),
     )
 
     regshot_runner = RegshotRunner(
@@ -217,6 +218,8 @@ try:
         inetsim_minio_runner=inetsim_minio_runner,
         pcap_minio_runner=pcap_minio_runner,
         windows_minio_runner=windows_minio_runner,
+        noriben_capture_padding_seconds=5,
+        noriben_completion_timeout=300,
     )
 
     # --------------------------------------------------
