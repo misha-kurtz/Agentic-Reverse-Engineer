@@ -15,6 +15,8 @@ from runners.ghidra import GhidraRunner
 from workflows.static_analysis import StaticAnalysisWorkflow
 from workflows.detection import DetectionWorkflow
 
+
+'''
 SAMPLE_ID = "B001"
 
 SAMPLES = {
@@ -22,7 +24,15 @@ SAMPLES = {
     "packed": "7141ef42cb8c213e2ee02cb2ef18e5bf8e862282ab236d39f4115199c16bf402",
     "encrypted": "c1d38e72ae55dc9232c962df041ef5371bf53cce1696867360ebcacd2d914109",
 }
+'''
 
+SAMPLE_ID = "B002"
+
+SAMPLES = {
+    "original": "d97fd021479dbaee852594aef955610cbe6ae66e4c92ba851d48f8353c37d03e",
+    "packed": "5504be1a85ce1189a9398a728bf7b8897e7264cbd12b0a3d7a1502a10b3c35e5",
+    "encrypted": "1f8ed941fdadb69d98678f2933a22cb090366faea0ac9d3502d3859e150afd40",
+}
 
 # --------------------------------------------------
 # Resolve sample variant
@@ -59,12 +69,7 @@ remnux_vm = VMwareRunner(
     vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
 )
 
-windows_vm = VMwareRunner(
-    vmx_path=r"D:\Virtual Machines\Windows 11 x64\Windows 11 x64\Windows 11 x64.vmx",
-    guest_username=r".\misha.kurtz",
-    password_env_var="WINDOWS_GUEST_PASSWORD",
-    vmrun_path=r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
-)
+
 
 datapool_was_running = datapool_vm.is_running()
 remnux_was_running = remnux_vm.is_running()

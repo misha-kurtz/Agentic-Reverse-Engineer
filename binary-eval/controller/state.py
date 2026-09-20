@@ -48,7 +48,13 @@ class AnalysisState:
     encrypted_payload_suspected: bool = False
     encryption_family: str | None = None
     encryption_confidence: float = 0.0
+
+    crypto_behavior_detected: bool = False
+    payload_concealment_detected: bool = False
+
     encryption_indicators: list[str] = field(default_factory=list)
+    crypto_indicators: list[str] = field(default_factory=list)
+    concealment_indicators: list[str] = field(default_factory=list)
 
     # Recovery policy
     recovery_policy: str | None = None

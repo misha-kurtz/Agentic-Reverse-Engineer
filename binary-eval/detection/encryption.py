@@ -8,7 +8,13 @@ class EncryptionAssessment:
     suspected: bool
     confidence: float
     family: str | None = None
+
+    crypto_behavior_detected: bool = False
+    payload_concealment_detected: bool = False
+
     indicators: list[str] = field(default_factory=list)
+    crypto_indicators: list[str] = field(default_factory=list)
+    concealment_indicators: list[str] = field(default_factory=list)
 
 
 def detect_encryption(
@@ -18,13 +24,29 @@ def detect_encryption(
 ) -> EncryptionAssessment:
 
     score: float = 0.0
+
+    # Supporting/weak evidence
     indicators: list[str] = []
+
+    # Evidence of crypto
+    crypto_indicators: list[str] = []
+
+    # Evidence executable payload concealed
+    concealment_indicators: list[str] = []
+
     family: str | None = None
 
     sections = pe_data.get("sections", [])
     imports = pe_data.get("imports", [])
 
-    strong_encryption_evidence = False
+    crypto_behavior_detected = False
+    payload_concealment_evidence = False
+    semantic_degradation = False
+
+    runtime_linking_rules = []
+    encoding_rules = []
+    pe_loading_rules = []
+    obfuscation_rules = []
 
     # --------------------------------------------------
     # PE structural analysis
@@ -166,10 +188,6 @@ def detect_encryption(
 
         if isinstance(capa_rules, dict):
 
-            runtime_linking_rules = []
-            encoding_rules = []
-            pe_loading_rules = []
-            obfuscation_rules = []
 
             for rule_name, rule_data in capa_rules.items():
 
@@ -255,12 +273,11 @@ def detect_encryption(
             # Explicit encoding/decryption behavior is a
             # stronger encrypted-payload indicator.
             if encoding_rules:
-                score += 0.35
-                strong_encryption_evidence = True
+                crypto_behavior_detected = True
+                score += 0.05
 
-                indicators.append(
-                    "capa identified data encoding/"
-                    "decryption behavior: "
+                crypto_indicators.append(
+                    "Cryptographic/data-encoding behavior detected: "
                     + ", ".join(encoding_rules)
                 )
 
@@ -285,6 +302,28 @@ def detect_encryption(
                     "obfuscation behavior: "
                     + ", ".join(obfuscation_rules)
                 )
+
+    has_high_entropy = bool(high_entropy_sections)
+    has_runtime_linking = bool(runtime_linking_rules)
+    has_memory_management = bool(memory_api_matches)
+    has_pe_loading = bool(pe_loading_rules)
+
+    if (
+        has_high_entropy
+        and has_pe_loading
+        and (
+            has_runtime_linking
+            or has_memory_management
+        )
+    ):
+        payload_concealment_evidence = True
+        score += 0.35
+
+        concealment_indicators.append(
+            "Combined encrypted-payload indicators: "
+            "high entropy + PE loading/reconstruction + "
+            "runtime loader behavior"
+        )
 
     # --------------------------------------------------
     # Ghidra analysis
@@ -324,6 +363,7 @@ def detect_encryption(
         # Small visible code footprint may indicate
         # only a loader/decryption stub is exposed.
         if function_count <= 5:
+            semantic_degradation = True
             score += 0.05
 
             indicators.append(
@@ -344,6 +384,7 @@ def detect_encryption(
             )
 
             if failure_ratio >= 0.50:
+                semantic_degradation = True
                 score += 0.05
 
                 indicators.append(
@@ -362,6 +403,25 @@ def detect_encryption(
                 "no call graph edges"
             )
 
+
+        if (
+            not payload_concealment_evidence
+            and has_high_entropy
+            and semantic_degradation
+            and (
+                has_pe_loading
+                or has_runtime_linking
+                or has_memory_management
+            )
+        ):
+            payload_concealment_evidence = True
+            score += 0.35
+
+            concealment_indicators.append(
+                "Static semantic degradation combined with "
+                "high entropy and loader behavior"
+            )
+
     # --------------------------------------------------
     # Final assessment
     #
@@ -373,13 +433,17 @@ def detect_encryption(
     confidence = min(score, 1.0)
 
     suspected = (
-    confidence >= 0.5
-    and strong_encryption_evidence
-)
+        confidence >= 0.5
+        and payload_concealment_evidence
+    )
 
     return EncryptionAssessment(
-        suspected=confidence >= 0.5,
+        suspected=suspected,
         confidence=confidence,
         family=family,
+        crypto_behavior_detected=crypto_behavior_detected,
+        payload_concealment_detected=payload_concealment_evidence,
         indicators=indicators,
+        crypto_indicators=crypto_indicators,
+        concealment_indicators=concealment_indicators,
     )

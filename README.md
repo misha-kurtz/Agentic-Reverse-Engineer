@@ -40,7 +40,7 @@ Sysmon runner                              ✓
 Windows malware execution lifecycle        ✓
 Dynamic artifact upload from Windows       ✓
 Dynamic artifact upload from Ubuntu        ✓
-Wire dynamic workflow into controller      ✗
+Wire dynamic workflow into controller      ✓
 
 Automated payload unpacking from memory    ✗
 Automated payload decryption from memory   ✗

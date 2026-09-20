@@ -1,3 +1,4 @@
+# binary-eval/workflows/detection.py
 import json
 import tempfile
 
@@ -93,46 +94,75 @@ class DetectionWorkflow:
             ghidra_metrics=ghidra_metrics,
         )
 
-        state.packing_detected = (
-            packing_assessment.detected
-        )
+        state.packing_detected = packing_assessment.detected
+        state.packing_family = packing_assessment.family
+        state.packing_confidence = packing_assessment.confidence
+        state.packing_indicators = packing_assessment.indicators
 
-        state.packing_family = (
-            packing_assessment.family
-        )
-
-        state.packing_confidence = (
-            packing_assessment.confidence
-        )
-
-        state.packing_indicators = (
-            packing_assessment.indicators
-        )
 
         # --------------------------------------------------
         # Encryption detection.
+        #
+        # Packing substantially alters PE structure, entropy,
+        # imports, and visible code. These features overlap
+        # heavily with encrypted-payload indicators.
+        #
+        # If packing is confidently detected, defer encryption
+        # assessment until after unpacking.
         # --------------------------------------------------
 
-        encryption_assessment = detect_encryption(
-            pe_data=pe_data,
-            capa_data=capa_data,
-            ghidra_metrics=ghidra_metrics,
-        )
+        if state.packing_detected:
+            state.encrypted_payload_suspected = False
+            state.encryption_family = None
+            state.encryption_confidence = 0.0
 
-        state.encrypted_payload_suspected = (
-            encryption_assessment.suspected
-        )
+            state.crypto_behavior_detected = False
+            state.payload_concealment_detected = False
 
-        state.encryption_family = (
-            encryption_assessment.family
-        )
+            state.encryption_indicators = [
+                "Encryption assessment deferred because packing "
+                "was detected in the current binary view"
+            ]
 
-        state.encryption_confidence = (
-            encryption_assessment.confidence
-        )
+            state.crypto_indicators = []
+            state.concealment_indicators = []
 
-        state.encryption_indicators = (
-            encryption_assessment.indicators
-        )
+        else:
+            encryption_assessment = detect_encryption(
+                pe_data=pe_data,
+                capa_data=capa_data,
+                ghidra_metrics=ghidra_metrics,
+            )
 
+            state.encrypted_payload_suspected = (
+                encryption_assessment.suspected
+            )
+
+            state.encryption_family = (
+                encryption_assessment.family
+            )
+
+            state.encryption_confidence = (
+                encryption_assessment.confidence
+            )
+
+            state.crypto_behavior_detected = (
+                encryption_assessment.crypto_behavior_detected
+            )
+
+            state.payload_concealment_detected = (
+                encryption_assessment.payload_concealment_detected
+            )
+
+            state.encryption_indicators = (
+                encryption_assessment.indicators
+            )
+
+            state.crypto_indicators = (
+                encryption_assessment.crypto_indicators
+            )
+
+            state.concealment_indicators = (
+                encryption_assessment.concealment_indicators
+            )
         return state

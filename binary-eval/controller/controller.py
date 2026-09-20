@@ -22,10 +22,10 @@ class AnalysisController:
         self,
         minio_dispatch: MinioDispatchRunner,
         remnux_dispatch: RemnuxDispatchRunner,
-        windows_dispatch: WindowsDispatchRunner,
-        ubuntu_runner: UbuntuRunner,
         static_analysis_workflow: StaticAnalysisWorkflow,
         detection_workflow,
+        windows_dispatch: WindowsDispatchRunner | None = None,
+        ubuntu_runner: UbuntuRunner | None = None,
         dynamic_analysis_workflow: DynamicAnalysisWorkflow | None = None,
     ):
         self.minio_dispatch = minio_dispatch
@@ -176,6 +176,8 @@ class AnalysisController:
         state: AnalysisState,
     ) -> AnalysisState:
 
+        self._require_dynamic_dependencies()
+
         if state.presigned_url is None:
             raise RuntimeError(
                 "Presigned sample URL is not available"
@@ -244,12 +246,25 @@ class AnalysisController:
         execution_seconds: int = 60,
     ) -> AnalysisState:
 
-        if self.dynamic_analysis_workflow is None:
-            raise RuntimeError(
-                "Dynamic analysis workflow has not been configured"
-            )
+        self._require_dynamic_dependencies()        
 
         return self.dynamic_analysis_workflow.run(
             state,
             execution_seconds=execution_seconds,
         )
+
+    def _require_dynamic_dependencies(self) -> None:
+        if self.windows_dispatch is None:
+            raise RuntimeError(
+                "windows_dispatch is required for dynamic analysis"
+            )
+
+        if self.ubuntu_runner is None:
+            raise RuntimeError(
+                "ubuntu_runner is required for dynamic analysis"
+            )
+
+        if self.dynamic_analysis_workflow is None:
+            raise RuntimeError(
+                "Dynamic analysis workflow has not been configured"
+            )
