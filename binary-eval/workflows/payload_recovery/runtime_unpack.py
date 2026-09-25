@@ -15,6 +15,8 @@ from runners.debugger import (
     Instruction,
 )
 
+from runners.iat import IATAnalyzer
+
 
 class RuntimeUnpackError(RuntimeError):
     pass
@@ -138,6 +140,7 @@ class RuntimeUnpacker:
             pid = self.debugger.get_process_id()
 
             image_base = module.base
+            image_end = module.end
 
             packed_entry_rva = (
                 pe_info["entry_rva"]
@@ -405,6 +408,86 @@ class RuntimeUnpacker:
                 oep_va
                 - image_base
             )
+
+            #
+            # 12. Enumerate all modules currently loaded in the
+            #     debuggee now that execution is paused at the OEP.
+            #
+            loaded_modules = (
+                self.debugger.get_modules()
+            )
+
+            #
+            # Temporary diagnostic output.
+            #
+            print("[debug] Loaded modules:")
+
+            for loaded_module in loaded_modules:
+                print(
+                    f"[debug] "
+                    f"0x{loaded_module.base:X}-"
+                    f"0x{loaded_module.end:X} "
+                    f"{loaded_module.name}"
+                )
+
+            #
+            # 13. Create the IAT analyzer using the current
+            #     runtime image range and loaded-module map.
+            #
+            iat_analyzer = IATAnalyzer(
+                debugger=self.debugger,
+                image_start=image_base,
+                image_end=image_end,
+                modules=loaded_modules,
+                pointer_size=8,
+            )
+
+            #
+            # 14. TEMPORARY VALIDATION:
+            #     Use the known Scylla Normal/Advanced ranges
+            #     for the bind-shell sample.
+            #
+            normal = iat_analyzer.analyze_candidate(
+                name="normal",
+                start_va=image_base + 0x15FF8,
+                size=0x2F0,
+            )
+
+            advanced = iat_analyzer.analyze_candidate(
+                name="advanced",
+                start_va=image_base + 0x16000,
+                size=0x388,
+            )
+
+            selected = iat_analyzer.select_best(
+                (
+                    normal,
+                    advanced,
+                )
+            )
+
+            print(
+                iat_analyzer.format_candidate_summary(
+                    normal
+                )
+            )
+
+            print()
+
+            print(
+                iat_analyzer.format_candidate_summary(
+                    advanced
+                )
+            )
+
+            print()
+
+            print(
+                f"[debug] Selected IAT candidate: "
+                f"{selected.name}"
+            )
+
+
 
             #
             # Leave CDB paused on the confirmed OEP.

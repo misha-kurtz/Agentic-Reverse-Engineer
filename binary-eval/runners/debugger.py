@@ -357,6 +357,42 @@ class CdbDebugger:
             f"{output}"
         )
 
+    def get_modules(
+        self,
+    ) -> tuple[ModuleInfo, ...]:
+        '''
+        Return all modules currently loaded in the debuggee.
+        '''
+
+        output = self.command("lm")
+
+        modules: list[ModuleInfo] = []
+
+        for match in self._MODULE_RE.finditer(
+            output
+        ):
+            start, end, name = match.groups()
+
+            modules.append(
+                ModuleInfo(
+                    name=name,
+                    base=self._parse_address(
+                        start
+                    ),
+                    end=self._parse_address(
+                        end
+                    ),
+                )
+            )
+
+        if not modules:
+            raise DebuggerError(
+                "Could not parse loaded modules:\n"
+                f"{output}"
+            )
+
+        return tuple(modules)
+
     # ------------------------------------------------------------------
     # Breakpoints
     # ------------------------------------------------------------------

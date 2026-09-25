@@ -1,5 +1,3 @@
-# Test WinDbg/CDB against packed bindshell on physical device
-
 from pathlib import Path
 
 from runners.debugger import CdbDebugger
@@ -9,12 +7,12 @@ from workflows.payload_recovery.runtime_unpack import (
 
 
 CDB = Path(
-    r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"
+    r"C:\Program Files (x86)\Windows Kits\10"
+    r"\Debuggers\x64\cdb.exe"
 )
 
-# Packed bindshell sample on Windows VM
 sample = Path(
-    r"C:\analysis\bind_shell_packed.exe"
+    r"C:\path\to\bind_shell_packed.exe"
 )
 
 debugger = CdbDebugger(
@@ -29,6 +27,7 @@ result = unpacker.run(
     sample
 )
 
+print()
 print(f"PID:             {result.pid}")
 print(f"Image base:      0x{result.image_base:X}")
 print(f"Packed EP VA:    0x{result.packed_entry_va:X}")

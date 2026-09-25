@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Protocol
+from runners.debugger import ModuleInfo
 
 
 # ----------------------------------------------------------------------
@@ -244,7 +245,7 @@ class IATAnalyzer:
         debugger: MemoryReader,
         image_start: int,
         image_end: int,
-        modules: Iterable[ModuleRange],
+        modules: Iterable[ModuleInfo],
         pointer_size: int = 8,
     ):
         if image_end <= image_start:
@@ -315,10 +316,14 @@ class IATAnalyzer:
     def resolve_target_module(
         self,
         target_va: int,
-    ) -> ModuleRange | None:
+    ) -> ModuleInfo | None:
 
         for module in self.modules:
-            if module.contains(target_va):
+            if (
+                module.base
+                <= target_va
+                < module.end
+            ):
                 return module
 
         return None
@@ -450,22 +455,22 @@ class IATAnalyzer:
     @staticmethod
     def score(
         candidate: IATCandidate,
-    ) -> tuple[int, int, int, int]:
+    ) -> tuple[int, int, int, int, int]:
         """
         Lower tuple wins.
 
-        Priority:
+        Primary criterion:
+            Fewest invalid thunk entries.
 
-            1. Fewer thunk targets pointing back into the image.
-            2. Fewer unresolved thunk targets.
-            3. More externally resolved imports.
-            4. Smaller candidate range as final tie-breaker.
-
-        The negative valid count means candidates with more valid
-        external entries sort before candidates with fewer.
+        Tie-breakers:
+            1. Fewer internal targets.
+            2. Fewer unresolved targets.
+            3. More valid external targets.
+            4. Smaller candidate range.
         """
 
         return (
+            candidate.invalid_total,
             candidate.invalid_internal,
             candidate.unresolved,
             -candidate.valid_external,
