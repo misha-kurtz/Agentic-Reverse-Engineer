@@ -40,6 +40,8 @@ class SectionRange:
 class UnpackResult:
     input_path: Path
 
+    pid: int
+
     image_base: int
 
     packed_entry_va: int
@@ -132,6 +134,8 @@ class RuntimeUnpacker:
             module = self.debugger.get_module(
                 executable.name
             )
+
+            pid = self.debugger.get_process_id()
 
             image_base = module.base
 
@@ -407,6 +411,8 @@ class RuntimeUnpacker:
             #
             return UnpackResult(
                 input_path=executable,
+
+                pid=pid,
 
                 image_base=image_base,
 

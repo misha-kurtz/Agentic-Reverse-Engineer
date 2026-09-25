@@ -29,6 +29,7 @@ result = unpacker.run(
     sample
 )
 
+print(f"PID:             {result.pid}")
 print(f"Image base:      0x{result.image_base:X}")
 print(f"Packed EP VA:    0x{result.packed_entry_va:X}")
 print(f"Packed EP RVA:   0x{result.packed_entry_rva:X}")

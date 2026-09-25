@@ -668,3 +668,34 @@ class CdbDebugger:
             )
 
         return instructions
+
+    def get_process_id(self) -> int:
+        '''
+        Return the PID of the current debuggee process.
+        '''
+
+
+        output = self.command("|")
+
+        # Typical CDB output contains something like:
+        #
+        # .  0    id: 1a2c    create  name: sample.exe
+        #
+        pattern = re.compile(
+            r"^\s*[\.\#]?\s*\d+\s+"
+            r"id:\s*([0-9a-fA-F]+)",
+            re.MULTILINE,
+        )
+
+        match = pattern.search(output)
+
+        if match is None:
+            raise DebuggerError(
+                "Could not determine debuggee PID:\n"
+                f"{output}"
+            )
+
+        return int(
+            match.group(1),
+            16,
+        )
