@@ -7,12 +7,11 @@ from workflows.payload_recovery.runtime_unpack import (
 
 
 CDB = Path(
-    r"C:\Program Files (x86)\Windows Kits\10"
-    r"\Debuggers\x64\cdb.exe"
+    r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"
 )
 
 sample = Path(
-    r"C:\path\to\bind_shell_packed.exe"
+    r"C:analysis\bind_shell_packed.exe"
 )
 
 debugger = CdbDebugger(
