@@ -11,7 +11,7 @@ CDB = Path(
 )
 
 sample = Path(
-    r"C:analysis\bind_shell_packed.exe"
+    r"C:\analysis\bind_shell_packed.exe"
 )
 
 debugger = CdbDebugger(
