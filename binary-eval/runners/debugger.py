@@ -285,36 +285,35 @@ class CdbDebugger:
     def get_registers(
         self,
         *names: str,
-    ) -> dict[str, int]:
+        ) -> dict[str, int]:
 
         if not names:
-            raise ValueError("At least one register is required")
+                raise ValueError("At least one register is required")
 
         output = self.command(
-            "r " + " ".join(names)
+                "r " + " ".join(names)
         )
 
         values = {}
 
         for register, value in self._REGISTER_RE.findall(output):
-            values[register.lower()] = self._parse_address(value)
+                values[register.lower()] = self._parse_address(value)
 
         missing = [
-            name
-            for name in names
-            if name.lower() not in values
+                name
+                for name in names
+                if name.lower() not in values
         ]
 
         if missing:
-            raise DebuggerError(
+                raise DebuggerError(
                 f"Could not parse registers {missing}:\n{output}"
-            )
+                )
 
         return {
-            name.lower(): values[name.lower()]
-            for name in names
+                name.lower(): values[name.lower()]
+                for name in names
         }
-
     # ------------------------------------------------------------------
     # Modules
     # ------------------------------------------------------------------
