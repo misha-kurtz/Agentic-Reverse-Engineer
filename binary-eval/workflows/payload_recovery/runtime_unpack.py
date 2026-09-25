@@ -1,76 +1,5 @@
 # binary-eval/workflows/payload_recovery/runtime_unpack.py
 
-'''
-runtime_unpack.py
-
-1. Parse packed PE
-   ├── ImageBase
-   ├── AddressOfEntryPoint
-   ├── .dst VA/size
-   └── .stub VA/size
-
-2. debugger.py → launch under CDB/DbgEng
-
-3. Break at:
-      loaded_base + AddressOfEntryPoint
-
-4. Verify:
-      instruction == push rbx
-
-5. Save:
-      entry_rsp
-      entry_rbx
-
-6. Single step:
-      push rbx
-
-7. Save:
-      saved_rbx_slot = rsp
-
-8. Verify:
-      saved_rbx_slot == entry_rsp - 8
-
-9. Set:
-      ba r8 saved_rbx_slot
-
-10. Continue
-
-11. Break on restore access
-
-12. Verify:
-      pop rbx
-      restored_rsp == entry_rsp
-
-13. Decode subsequent instructions
-
-14. Find first direct JMP
-
-15. Resolve:
-      jmp_target
-
-16. Verify:
-      stub_start <= jmp_source < stub_end
-                  AND
-      dst_start <= jmp_target < dst_end
-
-17. Step JMP
-
-18. Verify:
-      RIP == jmp_target
-
-19. Record:
-      OEP_VA  = RIP
-      OEP_RVA = RIP - loaded_image_base
-
-20. Invoke PE reconstruction
-
-21. Validate resulting PE
-
-22. Return recovered executable
-'''
-
-# binary-eval/workflows/payload_recovery/runtime_unpack.py
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -304,10 +233,8 @@ class RuntimeUnpacker:
             saved_rbx_slot = new_rsp
 
             #
-            # Strong additional validation:
-            #
-            # [new RSP] should contain the value RBX had
-            # before executing push rbx.
+            # Verify the qword at [new RSP] contains the
+            # RBX value that was pushed.
             #
             saved_value = self.debugger.read_qword(
                 saved_rbx_slot
@@ -342,19 +269,19 @@ class RuntimeUnpacker:
             )
 
             #
-            # The saved-RBX hardware watchpoint has served its purpose.
-            # Remove it before continuing through the remainder of
-            # the UPX stub.
+            # The saved-RBX hardware watchpoint has served
+            # its purpose. Remove it before continuing
+            # through the rest of the stub.
             #
             self.debugger.clear_all_breakpoints()
 
             #
             # We're now stopped immediately AFTER pop rbx.
             #
-            # RIP should therefore point at the next
-            # instruction.
+            # RIP points at the next instruction.
             #
-            # 7. Find following direct relative JMP.
+            # 7. Find the following direct relative JMP
+            #    from the stub into the reconstructed section.
             #
             jump = self._find_stub_exit_jump(
                 start_va=restore_rip,
@@ -364,63 +291,42 @@ class RuntimeUnpacker:
 
             #
             # 8. Break directly on the stub-exit JMP and
-            #    continue execution until it is reached.
+            #    continue until that exact instruction.
             #
             self.debugger.set_breakpoint(
                 jump.source
-                )
+            )
 
             self.debugger.continue_execution()
 
-            current_rip = self.debugger.get_register(
-                "rip"
+            current_rip = (
+                self.debugger.get_register(
+                    "rip"
                 )
-
-            #
-            # Diagnostic: show instructions from the current RIP
-            # through the nearby region containing the expected JMP.
-            #
-            print(
-                f"[debug] Expected stub-exit JMP: 0x{jump.source:x}"
-            )
-            print(
-                f"[debug] Current RIP after continue: 0x{current_rip:x}"
             )
 
-            for instruction in self.debugger.iter_instructions(
-                current_rip,
-                max_instructions=8,
+            #
+            # Temporary diagnostic output.
+            #
+            print(
+                f"[debug] Expected stub-exit JMP: "
+                f"0x{jump.source:x}"
+            )
+
+            print(
+                f"[debug] Current RIP after continue: "
+                f"0x{current_rip:x}"
+            )
+
+            for instruction in (
+                self.debugger.iter_instructions(
+                    current_rip,
+                    max_instructions=8,
+                )
             ):
                 print(
                     f"[debug] {instruction.text}"
                 )
-            #
-            # The RBX sentinel watchpoint is no longer needed.
-            #
-            self.debugger.clear_all_breakpoints()
-
-            #
-            # Find the direct transition from the UPX stub
-            # into the reconstructed destination section.
-            #
-            jump = self._find_stub_exit_jump(
-                start_va=restore_rip,
-                stub=stub,
-                destination=destination,
-            )
-
-            #
-            # Break directly on that transition.
-            #
-            self.debugger.set_breakpoint(
-                jump.source
-            )
-
-            self.debugger.continue_execution()
-
-            current_rip = self.debugger.get_register(
-                "rip"
-            )
 
             if current_rip != jump.source:
                 raise RuntimeUnpackError(
@@ -430,7 +336,8 @@ class RuntimeUnpacker:
                 )
 
             #
-            # Validate the live instruction at the breakpoint.
+            # 9. Validate the live instruction at the
+            #    breakpoint.
             #
             live_jump_instruction = (
                 self.debugger.disassemble_one(
@@ -458,7 +365,7 @@ class RuntimeUnpacker:
                 )
 
             #
-            # Execute the stub-exit JMP.
+            # 10. Execute exactly the stub-exit JMP.
             #
             self.debugger.step_into()
 
@@ -466,6 +373,10 @@ class RuntimeUnpacker:
                 "rip"
             )
 
+            #
+            # 11. Verify that execution landed at the
+            #     expected OEP candidate.
+            #
             if oep_va != jump.target:
                 raise RuntimeUnpackError(
                     "JMP did not land on expected OEP: "
@@ -481,9 +392,10 @@ class RuntimeUnpacker:
                     f"section {destination.name}: "
                     f"0x{oep_va:x}"
                 )
+
             #
-            # RVA is always relative to loaded image base,
-            # NOT the .dst base.
+            # RVA is relative to the loaded image base,
+            # NOT the reconstructed section base.
             #
             oep_rva = (
                 oep_va
@@ -491,7 +403,7 @@ class RuntimeUnpacker:
             )
 
             #
-            # Leave the debugger paused at the confirmed OEP.
+            # Leave CDB paused on the confirmed OEP.
             #
             return UnpackResult(
                 input_path=executable,
@@ -550,6 +462,7 @@ class RuntimeUnpacker:
                         rip
                     )
                 )
+
             except DebuggerError:
                 previous = None
 
@@ -557,7 +470,7 @@ class RuntimeUnpacker:
             # Hardware data breakpoints on x86/x64 fire
             # after the memory-accessing instruction.
             #
-            # Therefore, at the matching:
+            # Therefore, after the matching:
             #
             #       pop rbx
             #
@@ -632,30 +545,6 @@ class RuntimeUnpacker:
         raise RuntimeUnpackError(
             "Could not locate direct stub-to-destination "
             "JMP after the RBX restore"
-        )
-
-    # ------------------------------------------------------------------
-    # Execution positioning
-    # ------------------------------------------------------------------
-
-    def _step_until(
-        self,
-        target_rip: int,
-        maximum_steps: int,
-    ) -> None:
-
-        for _ in range(maximum_steps + 1):
-            rip = self.debugger.get_register(
-                "rip"
-            )
-
-            if rip == target_rip:
-                return
-
-            self.debugger.step_into()
-
-        raise RuntimeUnpackError(
-            f"Failed to reach 0x{target_rip:x}"
         )
 
     # ------------------------------------------------------------------
