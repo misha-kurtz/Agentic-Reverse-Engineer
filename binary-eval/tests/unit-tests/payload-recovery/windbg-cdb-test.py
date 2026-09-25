@@ -12,8 +12,9 @@ CDB = Path(
     r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"
 )
 
+# Packed bindshell sample on Windows VM
 sample = Path(
-    r"D:\Virtual Machines\shared\bind\sections.exe"
+    r"C:\analysis\bind_shell_packed.exe"
 )
 
 debugger = CdbDebugger(
