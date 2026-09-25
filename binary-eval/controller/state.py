@@ -94,7 +94,20 @@ class AnalysisState:
     regshot_upload_complete: bool = False
     sysmon_upload_complete: bool = False
 
+    # Payload recovery
+    recovery_attempted: bool = False
+    recovery_successful: bool = False
 
+    # Recovered payload info
+    recovered_sha256: str | None = None
+    recovered_sample_path: PurePosixPath | None = None
+    recovered_static_dir: PurePosixPath | None = None
+
+    # Recovered payload static artifact output paths
+    recovered_pe_metadata_path: PurePosixPath | None = None
+    recovered_floss_output_path: PurePosixPath | None = None
+    recovered_capa_output_path: PurePosixPath | None = None
+    recovered_ghidra_output_dir: PurePosixPath | None = None
 
 
 '''
