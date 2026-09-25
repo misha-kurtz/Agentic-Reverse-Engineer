@@ -347,7 +347,6 @@ class RuntimeUnpacker:
             # RIP should therefore point at the next
             # instruction.
             #
-            #
             # 7. Find following direct relative JMP.
             #
             jump = self._find_stub_exit_jump(
@@ -357,29 +356,28 @@ class RuntimeUnpacker:
             )
 
             #
-            # 8. Advance execution until RIP is sitting
-            #    directly on the JMP.
+            # 8. Break directly on the stub-exit JMP and
+            #    continue execution until it is reached.
             #
-            self._step_until(
-                target_rip=jump.source,
-                maximum_steps=(
-                    self.max_post_restore_instructions
-                ),
+            self.debugger.set_breakpoint(
+                jump.source
             )
 
-            current_rip = (
-                self.debugger.get_register(
-                    "rip"
-                )
+            self.debugger.continue_execution()
+
+            current_rip = self.debugger.get_register(
+                "rip"
             )
 
             if current_rip != jump.source:
                 raise RuntimeUnpackError(
-                    "Could not reach stub exit JMP"
+                    "Did not stop at stub exit JMP: "
+                    f"expected 0x{jump.source:x}, "
+                    f"got 0x{current_rip:x}"
                 )
 
             #
-            # Validate it again using live bytes.
+            # Validate the live instruction at the breakpoint.
             #
             live_jump_instruction = (
                 self.debugger.disassemble_one(
@@ -396,18 +394,18 @@ class RuntimeUnpacker:
             if live_jump is None:
                 raise RuntimeUnpackError(
                     f"Instruction at 0x{current_rip:x} "
-                    "is no longer a direct JMP"
+                    "is not a direct JMP"
                 )
 
             if live_jump.target != jump.target:
                 raise RuntimeUnpackError(
                     "JMP target changed unexpectedly: "
-                    f"0x{jump.target:x} -> "
-                    f"0x{live_jump.target:x}"
+                    f"expected 0x{jump.target:x}, "
+                    f"got 0x{live_jump.target:x}"
                 )
 
             #
-            # 9. Execute the direct JMP.
+            # Execute the stub-exit JMP.
             #
             self.debugger.step_into()
 
@@ -430,7 +428,6 @@ class RuntimeUnpacker:
                     f"section {destination.name}: "
                     f"0x{oep_va:x}"
                 )
-
             #
             # RVA is always relative to loaded image base,
             # NOT the .dst base.
