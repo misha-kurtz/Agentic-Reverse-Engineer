@@ -369,6 +369,50 @@ class RuntimeUnpacker:
                 "rip"
             )
 
+            #
+            # Diagnostic: show instructions from the current RIP
+            # through the nearby region containing the expected JMP.
+            #
+            print(
+                f"[debug] Expected stub-exit JMP: 0x{jump.source:x}"
+            )
+            print(
+                f"[debug] Current RIP after continue: 0x{current_rip:x}"
+            )
+
+            for instruction in self.debugger.iter_instructions(
+                current_rip,
+                max_instructions=8,
+            ):
+                print(
+                    f"[debug] {instruction.text}"
+                )
+
+            #
+            # If CDB stopped shortly before the expected JMP,
+            # step through the remaining instructions.
+            #
+            if current_rip != jump.source:
+                if (
+                    current_rip < jump.source
+                    and jump.source - current_rip <= 0x20
+                ):
+                    self._step_until(
+                        target_rip=jump.source,
+                        maximum_steps=16,
+                    )
+                else:
+                    raise RuntimeUnpackError(
+                        "Did not stop near stub exit JMP: "
+                        f"expected 0x{jump.source:x}, "
+                        f"got 0x{current_rip:x}"
+                    )
+
+            current_rip = self.debugger.get_register(
+                "rip"
+            )
+
+
             if current_rip != jump.source:
                 raise RuntimeUnpackError(
                     "Did not stop at stub exit JMP: "
