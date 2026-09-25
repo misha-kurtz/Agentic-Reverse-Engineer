@@ -342,6 +342,13 @@ class RuntimeUnpacker:
             )
 
             #
+            # The saved-RBX hardware watchpoint has served its purpose.
+            # Remove it before continuing through the remainder of
+            # the UPX stub.
+            #
+            self.debugger.clear_all_breakpoints()
+
+            #
             # We're now stopped immediately AFTER pop rbx.
             #
             # RIP should therefore point at the next
@@ -361,13 +368,13 @@ class RuntimeUnpacker:
             #
             self.debugger.set_breakpoint(
                 jump.source
-            )
+                )
 
             self.debugger.continue_execution()
 
             current_rip = self.debugger.get_register(
                 "rip"
-            )
+                )
 
             #
             # Diagnostic: show instructions from the current RIP
@@ -387,31 +394,33 @@ class RuntimeUnpacker:
                 print(
                     f"[debug] {instruction.text}"
                 )
+            #
+            # The RBX sentinel watchpoint is no longer needed.
+            #
+            self.debugger.clear_all_breakpoints()
 
             #
-            # If CDB stopped shortly before the expected JMP,
-            # step through the remaining instructions.
+            # Find the direct transition from the UPX stub
+            # into the reconstructed destination section.
             #
-            if current_rip != jump.source:
-                if (
-                    current_rip < jump.source
-                    and jump.source - current_rip <= 0x20
-                ):
-                    self._step_until(
-                        target_rip=jump.source,
-                        maximum_steps=16,
-                    )
-                else:
-                    raise RuntimeUnpackError(
-                        "Did not stop near stub exit JMP: "
-                        f"expected 0x{jump.source:x}, "
-                        f"got 0x{current_rip:x}"
-                    )
+            jump = self._find_stub_exit_jump(
+                start_va=restore_rip,
+                stub=stub,
+                destination=destination,
+            )
+
+            #
+            # Break directly on that transition.
+            #
+            self.debugger.set_breakpoint(
+                jump.source
+            )
+
+            self.debugger.continue_execution()
 
             current_rip = self.debugger.get_register(
                 "rip"
             )
-
 
             if current_rip != jump.source:
                 raise RuntimeUnpackError(
