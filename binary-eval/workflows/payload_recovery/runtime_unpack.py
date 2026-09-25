@@ -466,6 +466,7 @@ class RuntimeUnpacker:
                 )
             )
 
+            print()
             print(
                 iat_analyzer.format_candidate_summary(
                     normal
@@ -473,7 +474,6 @@ class RuntimeUnpacker:
             )
 
             print()
-
             print(
                 iat_analyzer.format_candidate_summary(
                     advanced
@@ -481,12 +481,34 @@ class RuntimeUnpacker:
             )
 
             print()
+            print("[debug] Normal invalid thunks:")
 
+            print(
+                iat_analyzer.format_thunks(
+                    normal,
+                    include_valid=False,
+                    include_invalid=True,
+                    include_null=False,
+                )
+            )
+
+            print()
             print(
                 f"[debug] Selected IAT candidate: "
                 f"{selected.name}"
             )
 
+            print()
+            print("[debug] Advanced invalid thunks:")
+
+            print(
+                iat_analyzer.format_thunks(
+                    advanced,
+                    include_valid=False,
+                    include_invalid=True,
+                    include_null=False,
+                )
+            )
 
 
             #
