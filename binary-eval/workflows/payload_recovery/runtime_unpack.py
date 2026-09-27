@@ -477,16 +477,6 @@ class RuntimeUnpacker:
                 )
             )
 
-            print()
-            print("[debug] Selected IAT boundary context:")
-            print(
-                iat_analyzer.format_range_context(
-                    selected_iat,
-                    before=4,
-                    after=16,
-                )
-            )
-
             #
             # Leave CDB paused on the confirmed OEP.
             #

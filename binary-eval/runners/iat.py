@@ -793,11 +793,6 @@ class IATAnalyzer:
                 )
             )
 
-            print(
-                f"[debug] IAT scan: "
-                f"{slot_index}/{slot_count} slots "
-                f"@ 0x{chunk_start:X}"
-            )
 
             values = (
                 self.debugger.read_qwords(
