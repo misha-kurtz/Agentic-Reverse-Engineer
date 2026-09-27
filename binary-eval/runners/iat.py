@@ -920,6 +920,97 @@ class IATAnalyzer:
 
         return tuple(ranges)
 
+    def _recover_iat_boundaries(
+        self,
+        thunks: tuple[Thunk, ...],
+        strict_ranges: tuple[IATRange, ...],
+        max_tail_slots: int = 32,
+    ) -> tuple[IATRange, ...]:
+        """
+        Expand strict IAT cores into probable complete IAT ranges.
+
+        Boundary rules:
+            - Include one immediately preceding NULL slot.
+            - Walk forward through invalid/unresolved/NULL entries.
+            - Stop at the first run of two consecutive NULL slots.
+            - Exclude the terminating NULL run.
+        """
+
+        index_by_va = {
+            thunk.slot_va: index
+            for index, thunk in enumerate(thunks)
+        }
+
+        recovered: list[IATRange] = []
+
+        for strict_range in strict_ranges:
+            start_index = index_by_va[strict_range.start_va]
+            end_index = index_by_va[
+                strict_range.end_va - self.pointer_size
+            ]
+
+            # Include one leading NULL boundary slot.
+            if start_index > 0:
+                previous = thunks[start_index - 1]
+
+                if previous.status == ThunkStatus.NULL:
+                    start_index -= 1
+
+            cursor = end_index + 1
+            tail_limit = min(
+                len(thunks),
+                cursor + max_tail_slots,
+            )
+
+            null_run = 0
+            recovered_end_index: int | None = None
+
+            while cursor < tail_limit:
+                thunk = thunks[cursor]
+
+                if thunk.status == ThunkStatus.VALID_EXTERNAL:
+                    # Another legitimate import extends the core.
+                    null_run = 0
+                    end_index = cursor
+                    cursor += 1
+                    continue
+
+                if thunk.status == ThunkStatus.NULL:
+                    null_run += 1
+
+                    if null_run == 2:
+                        # Exclude both NULLs forming the terminator.
+                        recovered_end_index = cursor - 2
+                        break
+
+                    cursor += 1
+                    continue
+
+                # INVALID_INTERNAL or UNRESOLVED remain part of the
+                # probable raw IAT until a terminating NULL run.
+                null_run = 0
+                cursor += 1
+
+            if recovered_end_index is None:
+                continue
+
+            start_va = thunks[start_index].slot_va
+
+            end_va = (
+                thunks[recovered_end_index].slot_va
+                + self.pointer_size
+            )
+
+            recovered.append(
+                IATRange(
+                    name=f"recovered_{len(recovered)}",
+                    start_va=start_va,
+                    size=end_va - start_va,
+                )
+            )
+
+        return tuple(recovered)
+
     def _expand_strict_boundaries(
         self,
         strict_ranges: tuple[IATRange, ...],
@@ -1129,22 +1220,14 @@ class IATAnalyzer:
     def discover_candidates(
         self,
     ) -> tuple[IATRange, ...]:
-        """
-        Discover plausible IAT ranges from the live reconstructed image.
-
-        Returns both strict candidates and conservative expanded
-        candidates.
-        """
 
         scanned = self._scan_pointer_range(
             start_va=self.image_start,
             end_va=self.image_end,
         )
 
-        strict_ranges = (
-            self._discover_strict_ranges(
-                scanned
-            )
+        strict_ranges = self._discover_strict_ranges(
+            scanned
         )
 
         if not strict_ranges:
@@ -1152,17 +1235,15 @@ class IATAnalyzer:
                 "No candidate IAT ranges discovered"
             )
 
-        expanded_ranges = (
-            self._discover_expanded_ranges(
-                thunks=scanned,
-                strict_ranges=strict_ranges,
-            )
+        recovered_ranges = self._recover_iat_boundaries(
+            thunks=scanned,
+            strict_ranges=strict_ranges,
         )
 
-        return (
-            strict_ranges
-            + expanded_ranges
-        )
+        if recovered_ranges:
+            return recovered_ranges
+
+        return strict_ranges
 
     def discover_and_analyze(
         self,
