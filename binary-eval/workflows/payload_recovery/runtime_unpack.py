@@ -481,7 +481,9 @@ class RuntimeUnpacker:
             # 15. Dump the reconstructed main image while the
             #     debuggee remains paused at the confirmed OEP.
             #
-            dump_path = executable.with_name(
+            dump_dir = Path.cwd() / "dumps"
+
+            dump_path = dump_dir / (
                 f"{executable.stem}_memory.bin"
             )
 

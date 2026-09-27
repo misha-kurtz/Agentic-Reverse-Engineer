@@ -530,7 +530,9 @@ class CdbDebugger:
         to a file using CDB .writemem.
         '''
 
-        output_path = Path(output_path).resolve()
+        output_path = Path(
+            output_path
+        ).resolve()
 
         if end_va <= start_va:
             raise ValueError(
@@ -545,9 +547,18 @@ class CdbDebugger:
         if output_path.exists():
             output_path.unlink()
 
-        output = self.command(
+        command = (
             f'.writemem "{output_path}" '
-            f'0x{start_va:X} 0x{end_va - 1:X}',
+            f'0x{start_va:X} 0x{end_va - 1:X}'
+        )
+
+        print(
+            f"[debug] CDB dump command: "
+            f"{command}"
+        )
+
+        output = self.command(
+            command,
             timeout=120.0,
         )
 
