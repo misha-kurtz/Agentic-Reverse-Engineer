@@ -212,30 +212,25 @@ class CdbDebugger:
         deadline = time.monotonic() + timeout
 
         output: list[str] = []
+        tail = ""
 
         while time.monotonic() < deadline:
-            remaining = max(
-                0.01,
-                deadline - time.monotonic(),
-            )
+            remaining = max(0.01, deadline - time.monotonic())
 
             try:
                 char = self._output_queue.get(
-                    timeout=min(
-                        0.1,
-                        remaining,
-                    )
+                    timeout=min(0.1, remaining)
                 )
-
             except queue.Empty:
                 continue
 
             output.append(char)
 
-            text = "".join(output)
+            # Only inspect the end of the output for the CDB prompt.
+            tail = (tail + char)[-64:]
 
-            if self._PROMPT_RE.search(text):
-                return text
+            if self._PROMPT_RE.search(tail):
+                return "".join(output)
 
         raise DebuggerError(
             "Timed out waiting for CDB prompt.\n"
@@ -489,7 +484,7 @@ class CdbDebugger:
             )
 
         output = self.command(
-            f"dq 0x{address:x} L{count}"
+            f"dq 0x{address:x} L0n{count}"
         )
 
         values: list[int] = []
@@ -503,36 +498,26 @@ class CdbDebugger:
         )
 
         for line in output.splitlines():
-
-            line_match = line_pattern.match(
-                line
-            )
+            line_match = line_pattern.match(line)
 
             if line_match is None:
                 continue
 
             data_text = line_match.group(1)
 
-            for value_text in value_pattern.findall(
-                data_text
-            ):
+            for value_text in value_pattern.findall(data_text):
                 values.append(
-                    self._parse_address(
-                        value_text
-                    )
+                    self._parse_address(value_text)
                 )
 
         if len(values) < count:
             raise DebuggerError(
                 f"Expected {count} qwords from "
                 f"0x{address:x}, but parsed "
-                f"{len(values)}:\n"
-                f"{output}"
+                f"{len(values)}:\n{output}"
             )
 
-        return tuple(
-            values[:count]
-        )
+        return tuple(values[:count])
 
     # ------------------------------------------------------------------
     # Disassembly
