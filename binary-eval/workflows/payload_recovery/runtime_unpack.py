@@ -60,6 +60,19 @@ class UnpackResult:
     source_section: str
     destination_section: str
 
+    iat_start_va: int
+    iat_size: int
+
+    iat_valid_thunks: int
+    iat_invalid_thunks: int
+
+    @property
+    def iat_rva(self) -> int:
+        return (
+            self.iat_start_va
+            - self.image_base
+        )
+
 
 class RuntimeUnpacker:
     """
@@ -443,73 +456,26 @@ class RuntimeUnpacker:
             )
 
             #
-            # 14. TEMPORARY VALIDATION:
-            #     Use the known Scylla Normal/Advanced ranges
-            #     for the bind-shell sample.
+            # 14. Discover and analyze candidate IAT ranges
+            #     from the live reconstructed image.
             #
-            normal = iat_analyzer.analyze_candidate(
-                name="normal",
-                start_va=image_base + 0x15FF8,
-                size=0x2F0,
-            )
+            iat_result = iat_analyzer.discover_and_analyze()
+            selected_iat = iat_result.selected
 
-            advanced = iat_analyzer.analyze_candidate(
-                name="advanced",
-                start_va=image_base + 0x16000,
-                size=0x388,
-            )
-
-            selected = iat_analyzer.select_best(
-                (
-                    normal,
-                    advanced,
-                )
-            )
+            # Temporary diagnostic output while validating autonomous IAT discovery.
+            print()
+            print(iat_analyzer.format_analysis_result(iat_result))
 
             print()
-            print(
-                iat_analyzer.format_candidate_summary(
-                    normal
-                )
-            )
-
-            print()
-            print(
-                iat_analyzer.format_candidate_summary(
-                    advanced
-                )
-            )
-
-            print()
-            print("[debug] Normal invalid thunks:")
-
+            print("[debug] Invalid thunks for selected IAT:")
             print(
                 iat_analyzer.format_thunks(
-                    normal,
+                    selected_iat,
                     include_valid=False,
                     include_invalid=True,
                     include_null=False,
                 )
             )
-
-            print()
-            print(
-                f"[debug] Selected IAT candidate: "
-                f"{selected.name}"
-            )
-
-            print()
-            print("[debug] Advanced invalid thunks:")
-
-            print(
-                iat_analyzer.format_thunks(
-                    advanced,
-                    include_valid=False,
-                    include_invalid=True,
-                    include_null=False,
-                )
-            )
-
 
             #
             # Leave CDB paused on the confirmed OEP.
@@ -534,6 +500,17 @@ class RuntimeUnpacker:
 
                 source_section=stub.name,
                 destination_section=destination.name,
+
+                iat_start_va=selected_iat.start_va,
+                iat_size=selected_iat.size,
+
+                iat_valid_thunks=(
+                    selected_iat.valid_external
+                ),
+
+                iat_invalid_thunks=(
+                    selected_iat.invalid_total
+                ),
             )
 
         except Exception:

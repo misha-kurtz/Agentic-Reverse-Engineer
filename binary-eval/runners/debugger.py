@@ -477,6 +477,63 @@ class CdbDebugger:
             match.group(1)
         )
 
+    def read_qwords(
+        self,
+        address: int,
+        count: int,
+    ) -> tuple[int, ...]:
+
+        if count <= 0:
+            raise ValueError(
+                "count must be positive"
+            )
+
+        output = self.command(
+            f"dq 0x{address:x} L{count}"
+        )
+
+        values: list[int] = []
+
+        line_pattern = re.compile(
+            r"^\s*[0-9a-fA-F`]+\s+(.*)$"
+        )
+
+        value_pattern = re.compile(
+            r"\b[0-9a-fA-F]{8}`[0-9a-fA-F]{8}\b"
+        )
+
+        for line in output.splitlines():
+
+            line_match = line_pattern.match(
+                line
+            )
+
+            if line_match is None:
+                continue
+
+            data_text = line_match.group(1)
+
+            for value_text in value_pattern.findall(
+                data_text
+            ):
+                values.append(
+                    self._parse_address(
+                        value_text
+                    )
+                )
+
+        if len(values) < count:
+            raise DebuggerError(
+                f"Expected {count} qwords from "
+                f"0x{address:x}, but parsed "
+                f"{len(values)}:\n"
+                f"{output}"
+            )
+
+        return tuple(
+            values[:count]
+        )
+
     # ------------------------------------------------------------------
     # Disassembly
     # ------------------------------------------------------------------

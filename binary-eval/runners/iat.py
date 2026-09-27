@@ -43,17 +43,31 @@ class IATError(RuntimeError):
 
 class MemoryReader(Protocol):
     """
-    Minimal interface required from debugger.py.
+    Minimal memory-reading interface required by IATAnalyzer.
 
-    CdbDebugger already exposes read_qword(), so it can satisfy this
-    protocol without importing CdbDebugger directly and tightly coupling
-    this module to a specific debugger implementation.
+    Implementations may use CDB, DbgEng, another debugger,
+    or any other mechanism capable of reading live process memory.
     """
 
     def read_qword(
         self,
         address: int,
     ) -> int:
+        """
+        Read one 64-bit little-endian value from process memory.
+        """
+        ...
+
+    def read_qwords(
+        self,
+        address: int,
+        count: int,
+    ) -> tuple[int, ...]:
+        """
+        Read `count` contiguous 64-bit values beginning at `address`.
+
+        Values are returned in increasing memory-address order.
+        """
         ...
 
 
@@ -204,6 +218,57 @@ class IATCandidate:
             )
         )
 
+    @property
+    def non_null_total(self) -> int:
+        return (
+            self.total
+            - self.null_entries
+        )
+
+
+    @property
+    def valid_density(self) -> float:
+        """
+        Fraction of the entire candidate range containing
+        valid external import targets.
+        """
+
+        if self.total == 0:
+            return 0.0
+
+        return (
+            self.valid_external
+            / self.total
+        )
+
+
+    @property
+    def invalid_density(self) -> float:
+        """
+        Fraction of non-null entries that are invalid or unresolved.
+        """
+
+        if self.non_null_total == 0:
+            return 0.0
+
+        return (
+            self.invalid_total
+            / self.non_null_total
+        )
+
+@dataclass(frozen=True)
+class IATRange:
+    name: str
+    start_va: int
+    size: int
+
+    @property
+    def end_va(self) -> int:
+        return (
+            self.start_va
+            + self.size
+        )
+
 
 @dataclass(frozen=True)
 class IATAnalysisResult:
@@ -226,18 +291,18 @@ class IATAnalysisResult:
 
 class IATAnalyzer:
     """
-    Analyze candidate Import Address Table ranges.
+    Discover, analyze, and select candidate Import Address Table ranges.
 
-    The current deterministic strategy is:
+    Deterministic strategy:
 
-        1. Enumerate each pointer-sized slot.
-        2. Read the runtime value stored in the slot.
-        3. Classify the target.
-        4. Score candidate ranges.
-        5. Select the candidate with the cleanest thunk set.
-        6. Return only externally resolved thunks for reconstruction.
-
-    Candidate discovery itself is intentionally separate for now.
+        1. Scan the reconstructed image for pointer-sized values.
+        2. Classify pointer targets using the loaded-module map.
+        3. Identify strict clusters of externally resolved pointers.
+        4. Construct conservative expanded candidates across
+           small invalid/unresolved gaps.
+        5. Analyze and score candidate ranges.
+        6. Select the strongest candidate.
+        7. Return externally resolved thunks for reconstruction.
     """
 
     def __init__(
@@ -455,25 +520,25 @@ class IATAnalyzer:
     @staticmethod
     def score(
         candidate: IATCandidate,
-    ) -> tuple[int, int, int, int, int]:
+    ) -> tuple[int, float, int, int, int]:
         """
         Lower tuple wins.
 
-        Primary criterion:
-            Fewest invalid thunk entries.
+        Candidates have already passed structural discovery.
 
-        Tie-breakers:
-            1. Fewer internal targets.
-            2. Fewer unresolved targets.
-            3. More valid external targets.
-            4. Smaller candidate range.
+        Prefer:
+            1. More valid external imports.
+            2. Lower invalid density.
+            3. Fewer invalid entries.
+            4. Higher overall valid density.
+            5. Smaller range.
         """
 
         return (
-            candidate.invalid_total,
-            candidate.invalid_internal,
-            candidate.unresolved,
             -candidate.valid_external,
+            candidate.invalid_density,
+            candidate.invalid_total,
+            -candidate.valid_density,
             candidate.size,
         )
 
@@ -534,7 +599,9 @@ class IATAnalyzer:
             f"  valid external:   {candidate.valid_external}\n"
             f"  invalid internal: {candidate.invalid_internal}\n"
             f"  unresolved:       {candidate.unresolved}\n"
-            f"  null:             {candidate.null_entries}"
+            f"  null:             {candidate.null_entries}\n"
+            f"  valid density:    {candidate.valid_density:.3f}\n"
+            f"  invalid density:  {candidate.invalid_density:.3f}"
         )
 
     @classmethod
@@ -635,4 +702,379 @@ class IATAnalyzer:
         #
         raise IATError(
             "32-bit pointer reads are not yet implemented"
+        )
+
+
+    def _scan_pointer_range(
+        self,
+        start_va: int,
+        end_va: int,
+        chunk_slots: int = 256,
+    ) -> tuple[Thunk, ...]:
+        '''
+        Get live pointer map
+        '''
+
+        if end_va <= start_va:
+            raise ValueError(
+                "end_va must be greater than start_va"
+            )
+
+        start_va = (
+            start_va
+            - (start_va % self.pointer_size)
+        )
+
+        scan_size = (
+            end_va
+            - start_va
+        )
+
+        slot_count = (
+            scan_size
+            // self.pointer_size
+        )
+
+        thunks: list[Thunk] = []
+
+        slot_index = 0
+
+        while slot_index < slot_count:
+
+            current_count = min(
+                chunk_slots,
+                slot_count - slot_index,
+            )
+
+            chunk_start = (
+                start_va
+                + (
+                    slot_index
+                    * self.pointer_size
+                )
+            )
+
+            values = (
+                self.debugger.read_qwords(
+                    chunk_start,
+                    current_count,
+                )
+            )
+
+            for index, target_va in enumerate(
+                values
+            ):
+
+                slot_va = (
+                    chunk_start
+                    + (
+                        index
+                        * self.pointer_size
+                    )
+                )
+
+                status, module_name = (
+                    self.classify_target(
+                        target_va
+                    )
+                )
+
+                thunks.append(
+                    Thunk(
+                        slot_va=slot_va,
+                        target_va=target_va,
+                        status=status,
+                        target_module=module_name,
+                    )
+                )
+
+            slot_index += current_count
+
+        return tuple(thunks)
+
+    def _discover_strict_ranges(
+        self,
+        thunks: tuple[Thunk, ...],
+        min_valid_thunks: int = 4,
+        max_null_gap: int = 2,
+    ) -> tuple[IATRange, ...]:
+
+        ranges: list[IATRange] = []
+
+        index = 0
+
+        while index < len(thunks):
+
+            if (
+                thunks[index].status
+                != ThunkStatus.VALID_EXTERNAL
+            ):
+                index += 1
+                continue
+
+            start_index = index
+            end_index = index
+
+            valid_count = 0
+            null_run = 0
+
+            while index < len(thunks):
+
+                thunk = thunks[index]
+
+                if (
+                    thunk.status
+                    == ThunkStatus.VALID_EXTERNAL
+                ):
+                    valid_count += 1
+                    null_run = 0
+                    end_index = index
+                    index += 1
+                    continue
+
+                if (
+                    thunk.status
+                    == ThunkStatus.NULL
+                ):
+                    null_run += 1
+
+                    if null_run > max_null_gap:
+                        break
+
+                    index += 1
+                    continue
+
+                break
+
+            if valid_count >= min_valid_thunks:
+
+                start_va = (
+                    thunks[start_index].slot_va
+                )
+
+                end_va = (
+                    thunks[end_index].slot_va
+                    + self.pointer_size
+                )
+
+                ranges.append(
+                    IATRange(
+                        name=(
+                            f"strict_{len(ranges)}"
+                        ),
+                        start_va=start_va,
+                        size=(
+                            end_va
+                            - start_va
+                        ),
+                    )
+                )
+
+            if index == start_index:
+                index += 1
+
+        return tuple(ranges)
+
+    def _discover_expanded_ranges(
+        self,
+        thunks: tuple[Thunk, ...],
+        strict_ranges: tuple[IATRange, ...],
+        max_noise_gap: int = 2,
+    ) -> tuple[IATRange, ...]:
+        """
+        Merge neighboring strict IAT ranges when they are separated
+        by only a very small number of invalid/unresolved pointer slots.
+
+        This provides a conservative "advanced" candidate analogous
+        to expanding a strict IAT search without hard-coding
+        sample-specific addresses.
+        """
+
+        if max_noise_gap < 1:
+            raise ValueError(
+                "max_noise_gap must be at least 1"
+            )
+
+        if len(strict_ranges) < 2:
+            return ()
+
+        thunk_by_va = {
+            thunk.slot_va: thunk
+            for thunk in thunks
+        }
+
+        expanded: list[IATRange] = []
+
+        current_start = strict_ranges[0].start_va
+        current_end = strict_ranges[0].end_va
+
+        merged_any = False
+
+        for next_range in strict_ranges[1:]:
+
+            gap_start = current_end
+            gap_end = next_range.start_va
+
+            gap_size = (
+                gap_end
+                - gap_start
+            )
+
+            gap_slots = (
+                gap_size
+                // self.pointer_size
+            )
+
+            can_merge = (
+                1
+                <= gap_slots
+                <= max_noise_gap
+            )
+
+            if can_merge:
+
+                gap_thunks: list[Thunk] = []
+
+                address = gap_start
+
+                while address < gap_end:
+
+                    thunk = thunk_by_va.get(
+                        address
+                    )
+
+                    if thunk is None:
+                        can_merge = False
+                        break
+
+                    gap_thunks.append(
+                        thunk
+                    )
+
+                    address += self.pointer_size
+
+                if can_merge:
+
+                    allowed_noise = {
+                        ThunkStatus.INVALID_INTERNAL,
+                        ThunkStatus.UNRESOLVED,
+                    }
+
+                    can_merge = all(
+                        thunk.status in allowed_noise
+                        for thunk in gap_thunks
+                    )
+
+            if can_merge:
+
+                current_end = (
+                    next_range.end_va
+                )
+
+                merged_any = True
+
+                continue
+
+            if merged_any:
+
+                expanded.append(
+                    IATRange(
+                        name=(
+                            f"expanded_{len(expanded)}"
+                        ),
+                        start_va=current_start,
+                        size=(
+                            current_end
+                            - current_start
+                        ),
+                    )
+                )
+
+            current_start = (
+                next_range.start_va
+            )
+
+            current_end = (
+                next_range.end_va
+            )
+
+            merged_any = False
+
+        if merged_any:
+
+            expanded.append(
+                IATRange(
+                    name=(
+                        f"expanded_{len(expanded)}"
+                    ),
+                    start_va=current_start,
+                    size=(
+                        current_end
+                        - current_start
+                    ),
+                )
+            )
+
+        return tuple(expanded)
+
+
+    def discover_candidates(
+        self,
+    ) -> tuple[IATRange, ...]:
+        """
+        Discover plausible IAT ranges from the live reconstructed image.
+
+        Returns both strict candidates and conservative expanded
+        candidates.
+        """
+
+        scanned = self._scan_pointer_range(
+            start_va=self.image_start,
+            end_va=self.image_end,
+        )
+
+        strict_ranges = (
+            self._discover_strict_ranges(
+                scanned
+            )
+        )
+
+        if not strict_ranges:
+            raise IATError(
+                "No candidate IAT ranges discovered"
+            )
+
+        expanded_ranges = (
+            self._discover_expanded_ranges(
+                thunks=scanned,
+                strict_ranges=strict_ranges,
+            )
+        )
+
+        return (
+            strict_ranges
+            + expanded_ranges
+        )
+
+    def discover_and_analyze(
+        self,
+    ) -> IATAnalysisResult:
+        """
+        Discover candidate IAT ranges, analyze each candidate,
+        and select the strongest candidate.
+        """
+
+        discovered = (
+            self.discover_candidates()
+        )
+
+        return self.analyze_candidates(
+            (
+                (
+                    candidate.name,
+                    candidate.start_va,
+                    candidate.size,
+                )
+                for candidate in discovered
+            )
         )
