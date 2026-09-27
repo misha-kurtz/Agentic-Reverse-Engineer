@@ -13,11 +13,11 @@ from runners.debugger import (
     DebuggerError,
     DirectJump,
     Instruction,
+    ModuleInfo
 )
 
-from runners.iat import IATAnalyzer
+from runners.iat import IATAnalyzer, Thunk
 from runners.memory_dump import MemoryDumper
-
 
 class RuntimeUnpackError(RuntimeError):
     pass
@@ -68,6 +68,9 @@ class UnpackResult:
     iat_invalid_thunks: int
 
     dump_path: Path
+
+    iat_thunks: tuple[Thunk, ...]
+    loaded_modules: tuple[ModuleInfo, ...]
 
     @property
     def iat_rva(self) -> int:
@@ -532,6 +535,9 @@ class RuntimeUnpacker:
                 iat_invalid_thunks=selected_iat.invalid_total,
 
                 dump_path=memory_dump.path,
+
+                iat_thunks=selected_iat.thunks,
+                loaded_modules=tuple(loaded_modules),
             )
 
         except Exception:

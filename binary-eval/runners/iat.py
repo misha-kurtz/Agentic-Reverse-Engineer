@@ -212,10 +212,7 @@ class IATCandidate:
         return tuple(
             thunk
             for thunk in self.thunks
-            if (
-                thunk.status
-                == ThunkStatus.VALID_EXTERNAL
-            )
+            if thunk.status == ThunkStatus.VALID_EXTERNAL
         )
 
     @property

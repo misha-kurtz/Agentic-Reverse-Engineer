@@ -1,3 +1,4 @@
+# Run pefile against reconstructed executable to view section info
 import pefile
 
 pe = pefile.PE(
