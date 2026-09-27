@@ -482,6 +482,13 @@ class RuntimeUnpacker:
             #     debuggee remains paused at the confirmed OEP.
             #
             dump_dir = Path.cwd() / "dumps"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+
+            test_file = dump_dir / "write-test.bin"
+            test_file.write_bytes(b"test")
+
+            print(test_file)
+            print(test_file.exists())
 
             dump_path = dump_dir / (
                 f"{executable.stem}_memory.bin"
