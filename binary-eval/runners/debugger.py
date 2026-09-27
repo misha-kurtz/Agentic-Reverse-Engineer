@@ -525,14 +525,8 @@ class CdbDebugger:
         start_va: int,
         end_va: int,
     ) -> Path:
-        '''
-        Write the half-open memory range [start_va, end_va)
-        to a file using CDB .writemem.
-        '''
 
-        output_path = Path(
-            output_path
-        ).resolve()
+        output_path = Path(output_path).resolve()
 
         if end_va <= start_va:
             raise ValueError(
@@ -547,9 +541,31 @@ class CdbDebugger:
         if output_path.exists():
             output_path.unlink()
 
+        temp_name = (
+            f"{output_path.stem}_cdb_tmp.bin"
+        )
+
+        temp_path = (
+            Path.cwd()
+            / temp_name
+        )
+
+        if temp_path.exists():
+            temp_path.unlink()
+
+        cwd_output = self.command(
+            ".shell cd"
+        )
+
+        print(
+            f"[debug] CDB current directory:\n"
+            f"{cwd_output}"
+        )
+
         command = (
-            f'.writemem "{output_path}" '
-            f'0x{start_va:X} 0x{end_va - 1:X}'
+            f".writemem {temp_name} "
+            f"0x{start_va:X} "
+            f"0x{end_va - 1:X}"
         )
 
         print(
@@ -562,11 +578,15 @@ class CdbDebugger:
             timeout=120.0,
         )
 
-        if not output_path.exists():
+        if not temp_path.exists():
             raise DebuggerError(
-                "CDB did not create memory dump "
-                f"{output_path}:\n{output}"
+                "CDB did not create temporary memory dump "
+                f"{temp_path}:\n{output}"
             )
+
+        temp_path.replace(
+            output_path
+        )
 
         return output_path
 
