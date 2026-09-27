@@ -519,6 +519,46 @@ class CdbDebugger:
 
         return tuple(values[:count])
 
+    def write_memory(
+        self,
+        output_path: Path | str,
+        start_va: int,
+        end_va: int,
+    ) -> Path:
+        '''
+        Write the half-open memory range [start_va, end_va)
+        to a file using CDB .writemem.
+        '''
+
+        output_path = Path(output_path).resolve()
+
+        if end_va <= start_va:
+            raise ValueError(
+                "end_va must be greater than start_va"
+            )
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        if output_path.exists():
+            output_path.unlink()
+
+        output = self.command(
+            f'.writemem "{output_path}" '
+            f'0x{start_va:X} 0x{end_va - 1:X}',
+            timeout=120.0,
+        )
+
+        if not output_path.exists():
+            raise DebuggerError(
+                "CDB did not create memory dump "
+                f"{output_path}:\n{output}"
+            )
+
+        return output_path
+
     # ------------------------------------------------------------------
     # Disassembly
     # ------------------------------------------------------------------

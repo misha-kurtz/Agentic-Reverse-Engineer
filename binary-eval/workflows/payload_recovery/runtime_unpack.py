@@ -16,6 +16,7 @@ from runners.debugger import (
 )
 
 from runners.iat import IATAnalyzer
+from runners.memory_dump import MemoryDumper
 
 
 class RuntimeUnpackError(RuntimeError):
@@ -66,12 +67,11 @@ class UnpackResult:
     iat_valid_thunks: int
     iat_invalid_thunks: int
 
+    dump_path: Path
+
     @property
     def iat_rva(self) -> int:
-        return (
-            self.iat_start_va
-            - self.image_base
-        )
+        return self.iat_start_va - self.image_base
 
 
 class RuntimeUnpacker:
@@ -478,13 +478,34 @@ class RuntimeUnpacker:
             )
 
             #
+            # 15. Dump the reconstructed main image while the
+            #     debuggee remains paused at the confirmed OEP.
+            #
+            dump_path = executable.with_name(
+                f"{executable.stem}_memory.bin"
+            )
+
+            memory_dumper = MemoryDumper(
+                debugger=self.debugger,
+            )
+
+            memory_dump = memory_dumper.dump_image(
+                output_path=dump_path,
+                start_va=image_base,
+                end_va=image_end,
+            )
+
+            print()
+            print(f"[debug] Memory dump: {memory_dump.path}")
+            print(f"[debug] Dump size:   0x{memory_dump.size:X}")
+
+            #
             # Leave CDB paused on the confirmed OEP.
             #
             return UnpackResult(
                 input_path=executable,
 
                 pid=pid,
-
                 image_base=image_base,
 
                 packed_entry_va=packed_entry_va,
@@ -504,13 +525,10 @@ class RuntimeUnpacker:
                 iat_start_va=selected_iat.start_va,
                 iat_size=selected_iat.size,
 
-                iat_valid_thunks=(
-                    selected_iat.valid_external
-                ),
+                iat_valid_thunks=selected_iat.valid_external,
+                iat_invalid_thunks=selected_iat.invalid_total,
 
-                iat_invalid_thunks=(
-                    selected_iat.invalid_total
-                ),
+                dump_path=memory_dump.path,
             )
 
         except Exception:
