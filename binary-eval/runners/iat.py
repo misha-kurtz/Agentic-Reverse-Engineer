@@ -681,6 +681,45 @@ class IATAnalyzer:
             lines
         )
 
+    def format_range_context(
+        self,
+        candidate: IATCandidate,
+        before: int = 16,
+        after: int = 16,
+    ) -> str:
+
+        start = max(
+            self.image_start,
+            candidate.start_va
+            - before * self.pointer_size,
+        )
+
+        end = min(
+            self.image_end,
+            candidate.end_va
+            + after * self.pointer_size,
+        )
+
+        thunks = self._scan_pointer_range(
+            start_va=start,
+            end_va=end,
+        )
+
+        lines = []
+
+        for thunk in thunks:
+            module = thunk.target_module or "-"
+
+            lines.append(
+                f"slot=0x{thunk.slot_va:016X} "
+                f"rva=0x{thunk.slot_va - self.image_start:05X} "
+                f"target=0x{thunk.target_va:016X} "
+                f"status={thunk.status.value} "
+                f"module={module}"
+            )
+
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Memory helpers
     # ------------------------------------------------------------------
@@ -880,6 +919,69 @@ class IATAnalyzer:
                 index += 1
 
         return tuple(ranges)
+
+    def _expand_strict_boundaries(
+        self,
+        strict_ranges: tuple[IATRange, ...],
+        thunks: tuple[Thunk, ...],
+        boundary_slots: int = 16,
+    ) -> tuple[IATRange, ...]:
+
+        if boundary_slots < 1:
+            raise ValueError(
+                "boundary_slots must be at least 1"
+            )
+
+        index_by_va = {
+            thunk.slot_va: index
+            for index, thunk in enumerate(thunks)
+        }
+
+        expanded: list[IATRange] = []
+
+        for strict_range in strict_ranges:
+
+            start_index = index_by_va[
+                strict_range.start_va
+            ]
+
+            end_index = index_by_va[
+                strict_range.end_va
+                - self.pointer_size
+            ]
+
+            expanded_start_index = max(
+                0,
+                start_index - boundary_slots,
+            )
+
+            expanded_end_index = min(
+                len(thunks) - 1,
+                end_index + boundary_slots,
+            )
+
+            expanded_start = (
+                thunks[
+                    expanded_start_index
+                ].slot_va
+            )
+
+            expanded_end = (
+                thunks[
+                    expanded_end_index
+                ].slot_va
+                + self.pointer_size
+            )
+
+            expanded.append(
+                IATRange(
+                    name=f"boundary_{len(expanded)}",
+                    start_va=expanded_start,
+                    size=expanded_end - expanded_start,
+                )
+            )
+
+        return tuple(expanded)
 
     def _discover_expanded_ranges(
         self,
