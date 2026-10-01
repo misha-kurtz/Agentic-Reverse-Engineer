@@ -5,7 +5,19 @@ Updated Memory Dump/PE reconstruction test should test three things independentl
 2. target_rva is computed correctly,
 3. export lookup actually returns a function name or ordinal for as many thunks as possible.
 
-When testing reconstructed bind shell, total valid thunk count = 82
+runtime unpack
+    ↓
+recover OEP
+    ↓
+recover IAT bounds
+    ↓
+classify thunks
+    ↓
+map thunk target → loaded module
+    ↓
+map target RVA → export name/ordinal
+    ↓
+82/82 imports resolved
 
 '''
 

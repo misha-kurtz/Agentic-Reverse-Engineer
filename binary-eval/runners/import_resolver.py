@@ -1,4 +1,18 @@
 # binary-eval/runners/import_resolver.py
+
+'''
+import_resolver.py
+    raw thunk
+        ↓
+    ResolvedImport
+        - slot_va
+        - target_va
+        - module_name
+        - target_rva
+        - function_name
+        - ordinal
+'''
+
 from __future__ import annotations
 
 from dataclasses import dataclass
