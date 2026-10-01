@@ -56,6 +56,285 @@ debugger = CdbDebugger(cdb_path=CDB)
 
 unpacker = RuntimeUnpacker(debugger=debugger)
 
+
+def read_c_string(
+    data: bytes,
+    offset: int,
+) -> str:
+
+    end = data.find(
+        b"\x00",
+        offset,
+    )
+
+    if end == -1:
+        raise RuntimeError(
+            f"Unterminated string at offset 0x{offset:X}"
+        )
+
+    return data[offset:end].decode("ascii")
+
+
+def verify_import_section(
+    section_data: bytes,
+    layout,
+    pointer_size: int = 8,
+) -> None:
+
+    if pointer_size == 8:
+        thunk_format = "<Q"
+        ordinal_flag = 0x8000000000000000
+    elif pointer_size == 4:
+        thunk_format = "<I"
+        ordinal_flag = 0x80000000
+    else:
+        raise ValueError(
+            "pointer_size must be 4 or 8"
+        )
+
+    def rva_to_offset(
+        rva: int,
+    ) -> int:
+
+        offset = rva - layout.section_rva
+
+        if offset < 0 or offset >= len(section_data):
+            raise RuntimeError(
+                f"RVA 0x{rva:X} falls outside serialized section"
+            )
+
+        return offset
+
+    print()
+    print("[debug] Parser-style verification:")
+
+    for module_layout in layout.modules:
+        module = module_layout.module
+
+        #
+        # Parse IMAGE_IMPORT_DESCRIPTOR.
+        #
+        descriptor_offset = rva_to_offset(
+            module_layout.descriptor_rva
+        )
+
+        (
+            original_first_thunk,
+            time_date_stamp,
+            forwarder_chain,
+            name_rva,
+            first_thunk,
+        ) = struct.unpack_from(
+            "<IIIII",
+            section_data,
+            descriptor_offset,
+        )
+
+        if original_first_thunk != module_layout.int_rva:
+            raise RuntimeError(
+                f"{module.name}: incorrect OriginalFirstThunk"
+            )
+
+        if name_rva != module_layout.dll_name_rva:
+            raise RuntimeError(
+                f"{module.name}: incorrect Name RVA"
+            )
+
+        if first_thunk != module_layout.iat_rva:
+            raise RuntimeError(
+                f"{module.name}: incorrect FirstThunk"
+            )
+
+        if time_date_stamp != 0:
+            raise RuntimeError(
+                f"{module.name}: TimeDateStamp is not zero"
+            )
+
+        if forwarder_chain != 0:
+            raise RuntimeError(
+                f"{module.name}: ForwarderChain is not zero"
+            )
+
+        #
+        # Parse DLL name.
+        #
+        dll_name_offset = rva_to_offset(
+            name_rva
+        )
+
+        parsed_dll_name = read_c_string(
+            section_data,
+            dll_name_offset,
+        )
+
+        if parsed_dll_name != module.name:
+            raise RuntimeError(
+                f"DLL name mismatch: "
+                f"expected {module.name}, "
+                f"got {parsed_dll_name}"
+            )
+
+        #
+        # Parse INT and IAT entries.
+        #
+        int_offset = rva_to_offset(
+            original_first_thunk
+        )
+
+        iat_offset = rva_to_offset(
+            first_thunk
+        )
+
+        for index, resolved in enumerate(
+            module.imports
+        ):
+            int_value = struct.unpack_from(
+                thunk_format,
+                section_data,
+                int_offset + (index * pointer_size),
+            )[0]
+
+            iat_value = struct.unpack_from(
+                thunk_format,
+                section_data,
+                iat_offset + (index * pointer_size),
+            )[0]
+
+            if int_value != iat_value:
+                raise RuntimeError(
+                    f"{module.name} import {index}: "
+                    "INT and IAT values differ"
+                )
+
+            expected_name_rva = (
+                module_layout.import_name_rvas[index]
+            )
+
+            #
+            # Import by name.
+            #
+            if expected_name_rva is not None:
+                if int_value != expected_name_rva:
+                    raise RuntimeError(
+                        f"{module.name} import {index}: "
+                        "incorrect import-name RVA"
+                    )
+
+                name_offset = rva_to_offset(
+                    int_value
+                )
+
+                hint = struct.unpack_from(
+                    "<H",
+                    section_data,
+                    name_offset,
+                )[0]
+
+                parsed_function_name = read_c_string(
+                    section_data,
+                    name_offset + 2,
+                )
+
+                if hint != 0:
+                    raise RuntimeError(
+                        f"{module.name}!{resolved.function_name}: "
+                        "expected hint 0"
+                    )
+
+                if parsed_function_name != resolved.function_name:
+                    raise RuntimeError(
+                        f"Function name mismatch: "
+                        f"expected {resolved.function_name}, "
+                        f"got {parsed_function_name}"
+                    )
+
+            #
+            # Import by ordinal.
+            #
+            elif resolved.ordinal is not None:
+                expected_value = (
+                    ordinal_flag
+                    | resolved.ordinal
+                )
+
+                if int_value != expected_value:
+                    raise RuntimeError(
+                        f"{module.name} ordinal "
+                        f"{resolved.ordinal}: "
+                        "incorrect thunk value"
+                    )
+
+            else:
+                raise RuntimeError(
+                    f"{module.name} import {index} "
+                    "has neither name nor ordinal"
+                )
+
+        #
+        # Verify INT terminator.
+        #
+        int_terminator = struct.unpack_from(
+            thunk_format,
+            section_data,
+            int_offset + (
+                len(module.imports)
+                * pointer_size
+            ),
+        )[0]
+
+        if int_terminator != 0:
+            raise RuntimeError(
+                f"{module.name}: INT is not null terminated"
+            )
+
+        #
+        # Verify IAT terminator.
+        #
+        iat_terminator = struct.unpack_from(
+            thunk_format,
+            section_data,
+            iat_offset + (
+                len(module.imports)
+                * pointer_size
+            ),
+        )[0]
+
+        if iat_terminator != 0:
+            raise RuntimeError(
+                f"{module.name}: IAT is not null terminated"
+            )
+
+        print(
+            f"[debug] {module.name}: "
+            f"{len(module.imports)} imports verified"
+        )
+
+    #
+    # Verify final null IMAGE_IMPORT_DESCRIPTOR.
+    #
+    null_descriptor_rva = (
+        layout.descriptor_rva
+        + (len(layout.modules) * 20)
+    )
+
+    null_descriptor_offset = rva_to_offset(
+        null_descriptor_rva
+    )
+
+    null_descriptor = section_data[
+        null_descriptor_offset:
+        null_descriptor_offset + 20
+    ]
+
+    if null_descriptor != b"\x00" * 20:
+        raise RuntimeError(
+            "Final IMAGE_IMPORT_DESCRIPTOR is not null"
+        )
+
+    print(
+        "[debug] Null descriptor verified"
+    )
+
 try:
     result = unpacker.run(sample)
 
@@ -335,6 +614,28 @@ try:
 
     print()
     print("[debug] Null import descriptor: OK")
+
+    section_data = build_import_section(
+        layout,
+        pointer_size=8,
+    )
+
+    print()
+    print("[debug] Serialized import section:")
+    print(f"Expected size:       0x{layout.section_size:X}")
+    print(f"Actual size:         0x{len(section_data):X}")
+
+    if len(section_data) != layout.section_size:
+        raise RuntimeError(
+            "Serialized import section size does not match layout"
+        )
+
+    verify_import_section(
+        section_data,
+        layout,
+        pointer_size=8,
+    )
+
 
 finally:
     debugger.close()
