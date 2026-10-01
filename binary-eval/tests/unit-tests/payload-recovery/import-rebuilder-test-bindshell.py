@@ -28,7 +28,7 @@ from pathlib import Path
 from runners.debugger import CdbDebugger
 from runners.iat import ThunkStatus
 from runners.import_resolver import ImportResolver
-from runners.import_rebuilder import group_imports_by_module
+from runners.import_rebuilder import group_imports_by_module, build_import_modules
 from workflows.payload_recovery.runtime_unpack import RuntimeUnpacker
 
 
@@ -125,6 +125,28 @@ try:
 
     if grouped_total != len(resolved_imports):
         raise RuntimeError("Import grouping lost or duplicated imports")
+
+    import_modules = build_import_modules(resolved_imports)
+
+    print()
+    print("[debug] Import modules:")
+
+    for module in import_modules:
+        print()
+        print(f"{module.name}: {len(module.imports)} imports")
+
+        for resolved in module.imports:
+            if resolved.function_name is not None:
+                symbol = resolved.function_name
+            elif resolved.ordinal is not None:
+                symbol = f"ordinal_{resolved.ordinal}"
+            else:
+                symbol = "<unresolved>"
+
+            print(
+                f"  slot=0x{resolved.slot_va:X} "
+                f"{symbol}"
+            )
 
 finally:
     debugger.close()
