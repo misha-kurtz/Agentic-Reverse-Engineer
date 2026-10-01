@@ -13,8 +13,8 @@ import_rebuilder.py
 '''
 from __future__ import annotations
 from dataclasses import dataclass
-
 from collections import defaultdict
+import struct
 
 from runners.import_resolver import ImportResolutionError, ResolvedImport
 
@@ -93,7 +93,7 @@ def build_import_modules(
 
         modules.append(
             ImportModule(
-                name=module_name,
+                name=normalize_module_name(module_name),
                 imports=ordered_imports,
             )
         )
@@ -233,3 +233,171 @@ def calculate_layout(
         descriptor_size=descriptor_table_size,
         modules=tuple(module_layouts),
     )
+
+def build_import_section(
+    layout: ImportLayout,
+    pointer_size: int = 8,
+) -> bytes:
+
+    if pointer_size not in (4, 8):
+        raise ValueError("pointer_size must be 4 or 8")
+
+    data = bytearray(layout.section_size)
+
+    if pointer_size == 8:
+        thunk_format = "<Q"
+        ordinal_flag = 0x8000000000000000
+    else:
+        thunk_format = "<I"
+        ordinal_flag = 0x80000000
+
+    def rva_to_offset(rva: int) -> int:
+        offset = rva - layout.section_rva
+
+        if offset < 0 or offset >= len(data):
+            raise ValueError(
+                f"RVA 0x{rva:X} falls outside import section"
+            )
+
+        return offset
+
+    #
+    # 1. Write IMAGE_IMPORT_DESCRIPTOR entries.
+    #
+    for module_layout in layout.modules:
+        descriptor_offset = rva_to_offset(
+            module_layout.descriptor_rva
+        )
+
+        struct.pack_into(
+            "<IIIII",
+            data,
+            descriptor_offset,
+            module_layout.int_rva,
+            0,
+            0,
+            module_layout.dll_name_rva,
+            module_layout.iat_rva,
+        )
+
+    #
+    # The final IMAGE_IMPORT_DESCRIPTOR remains zero-filled.
+    # bytearray() already initialized the section to zero.
+    #
+
+    #
+    # 2. Write DLL name strings.
+    #
+    for module_layout in layout.modules:
+        dll_name = module_layout.module.name.encode("ascii") + b"\x00"
+
+        dll_name_offset = rva_to_offset(
+            module_layout.dll_name_rva
+        )
+
+        data[
+            dll_name_offset:
+            dll_name_offset + len(dll_name)
+        ] = dll_name
+
+    #
+    # 3. Write IMAGE_IMPORT_BY_NAME structures.
+    #
+    for module_layout in layout.modules:
+        for resolved, name_rva in zip(
+            module_layout.module.imports,
+            module_layout.import_name_rvas,
+        ):
+            if name_rva is None:
+                continue
+
+            if resolved.function_name is None:
+                raise ImportResolutionError(
+                    f"Import at slot 0x{resolved.slot_va:X} "
+                    "has an import-name RVA but no function name"
+                )
+
+            name_offset = rva_to_offset(
+                name_rva
+            )
+
+            function_name = (
+                resolved.function_name.encode("ascii")
+                + b"\x00"
+            )
+
+            #
+            # IMAGE_IMPORT_BY_NAME:
+            #
+            # WORD Hint = 0
+            # CHAR Name[]
+            #
+            struct.pack_into(
+                "<H",
+                data,
+                name_offset,
+                0,
+            )
+
+            function_offset = name_offset + 2
+
+            data[
+                function_offset:
+                function_offset + len(function_name)
+            ] = function_name
+
+    #
+    # 4. Write INT and IAT thunk arrays.
+    #
+    for module_layout in layout.modules:
+        int_offset = rva_to_offset(
+            module_layout.int_rva
+        )
+
+        iat_offset = rva_to_offset(
+            module_layout.iat_rva
+        )
+
+        for index, resolved in enumerate(
+            module_layout.module.imports
+        ):
+            name_rva = (
+                module_layout.import_name_rvas[index]
+            )
+
+            if name_rva is not None:
+                thunk_value = name_rva
+
+            elif resolved.ordinal is not None:
+                thunk_value = (
+                    ordinal_flag
+                    | resolved.ordinal
+                )
+
+            else:
+                raise ImportResolutionError(
+                    f"Import at slot 0x{resolved.slot_va:X} "
+                    "cannot be encoded"
+                )
+
+            struct.pack_into(
+                thunk_format,
+                data,
+                int_offset + (index * pointer_size),
+                thunk_value,
+            )
+
+            struct.pack_into(
+                thunk_format,
+                data,
+                iat_offset + (index * pointer_size),
+                thunk_value,
+            )
+
+        #
+        # No explicit terminator is necessary.
+        # The bytearray is zero-filled and calculate_layout()
+        # reserved one additional thunk for each array.
+        #
+
+    return bytes(data)

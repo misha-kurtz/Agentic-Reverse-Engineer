@@ -7,6 +7,8 @@ Tests:
 2. target_rva is computed correctly.
 3. Export lookup resolves function name or ordinal.
 4. Resolved imports are grouped correctly by DLL.
+5. Layout calculcation.
+6. Binary serialization.
 
 runtime unpack
     ↓
@@ -21,15 +23,25 @@ map thunk target → loaded module
 map target RVA → export name/ordinal
     ↓
 group resolved imports by DLL
+    ↓
+build import modules
+    ↓
+calculate layout
+    ↓
+serialize import section
+    ↓
+validate null import descriptor
 '''
 
 from pathlib import Path
+import struct
 
 from runners.debugger import CdbDebugger
 from runners.iat import ThunkStatus
 from runners.import_resolver import ImportResolver
 from runners.import_rebuilder import (
     build_import_modules,
+    build_import_section,
     calculate_layout,
     group_imports_by_module,
 )
@@ -220,6 +232,110 @@ try:
             "Import layout lost or duplicated imports"
         )
 
+    #
+    # Test import section serialization.
+    #
+    section_data = build_import_section(
+        layout,
+        pointer_size=8,
+    )
+
+    print()
+    print("[debug] Serialized import section:")
+    print(f"Expected size:       0x{layout.section_size:X}")
+    print(f"Actual size:         0x{len(section_data):X}")
+
+    if len(section_data) != layout.section_size:
+        raise RuntimeError(
+            "Serialized import section size does not match layout"
+        )
+
+    for module_layout in layout.modules:
+        descriptor_offset = (
+            module_layout.descriptor_rva
+            - layout.section_rva
+        )
+
+        (
+            original_first_thunk,
+            time_date_stamp,
+            forwarder_chain,
+            name_rva,
+            first_thunk,
+        ) = struct.unpack_from(
+            "<IIIII",
+            section_data,
+            descriptor_offset,
+        )
+
+        print()
+        print(
+            f"[debug] Descriptor: "
+            f"{module_layout.module.name}"
+        )
+        print(
+            f"  OriginalFirstThunk: "
+            f"0x{original_first_thunk:X}"
+        )
+        print(
+            f"  Name:               "
+            f"0x{name_rva:X}"
+        )
+        print(
+            f"  FirstThunk:         "
+            f"0x{first_thunk:X}"
+        )
+
+        if original_first_thunk != module_layout.int_rva:
+            raise RuntimeError(
+                f"{module_layout.module.name} "
+                "OriginalFirstThunk is incorrect"
+            )
+
+        if name_rva != module_layout.dll_name_rva:
+            raise RuntimeError(
+                f"{module_layout.module.name} "
+                "Name RVA is incorrect"
+            )
+
+        if first_thunk != module_layout.iat_rva:
+            raise RuntimeError(
+                f"{module_layout.module.name} "
+                "FirstThunk is incorrect"
+            )
+
+        if time_date_stamp != 0:
+            raise RuntimeError(
+                "TimeDateStamp should be zero"
+            )
+
+        if forwarder_chain != 0:
+            raise RuntimeError(
+                "ForwarderChain should be zero"
+            )
+
+    null_descriptor_rva = (
+        layout.descriptor_rva
+        + (len(layout.modules) * 20)
+    )
+
+    null_descriptor_offset = (
+        null_descriptor_rva
+        - layout.section_rva
+    )
+
+    null_descriptor = section_data[
+        null_descriptor_offset:
+        null_descriptor_offset + 20
+    ]
+
+    if null_descriptor != b"\x00" * 20:
+        raise RuntimeError(
+            "Final import descriptor is not null"
+        )
+
+    print()
+    print("[debug] Null import descriptor: OK")
 
 finally:
     debugger.close()
