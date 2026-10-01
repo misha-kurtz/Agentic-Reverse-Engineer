@@ -126,7 +126,7 @@ try:
     if grouped_total != len(resolved_imports):
         raise RuntimeError("Import grouping lost or duplicated imports")
 
-        import_modules = build_import_modules(resolved_imports)
+    import_modules = build_import_modules(resolved_imports)
 
     print()
     print("[debug] Import modules:")
