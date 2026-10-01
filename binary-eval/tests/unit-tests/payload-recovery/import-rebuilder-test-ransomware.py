@@ -28,7 +28,11 @@ from pathlib import Path
 from runners.debugger import CdbDebugger
 from runners.iat import ThunkStatus
 from runners.import_resolver import ImportResolver
-from runners.import_rebuilder import group_imports_by_module, build_import_modules
+from runners.import_rebuilder import (
+    build_import_modules,
+    calculate_layout,
+    group_imports_by_module,
+)
 from workflows.payload_recovery.runtime_unpack import RuntimeUnpacker
 
 
@@ -147,6 +151,75 @@ try:
                 f"  slot=0x{resolved.slot_va:X} "
                 f"{symbol}"
             )
+
+    
+    #
+    # Test import section layout calculation.
+    #
+    section_rva = 0x30000
+
+    layout = calculate_layout(
+        import_modules,
+        section_rva=section_rva,
+    )
+
+    print()
+    print("[debug] Import section layout:")
+    print(f"Section RVA:         0x{layout.section_rva:X}")
+    print(f"Section end RVA:     0x{layout.section_end_rva:X}")
+    print(f"Section size:        0x{layout.section_size:X}")
+    print(f"Descriptor RVA:      0x{layout.descriptor_rva:X}")
+    print(f"Descriptor size:     0x{layout.descriptor_size:X}")
+
+    layout_import_total = 0
+
+    for module_layout in layout.modules:
+        module = module_layout.module
+        layout_import_total += len(module.imports)
+
+        print()
+        print(f"{module.name}:")
+        print(f"  Descriptor RVA:    0x{module_layout.descriptor_rva:X}")
+        print(f"  DLL name RVA:      0x{module_layout.dll_name_rva:X}")
+        print(f"  INT RVA:           0x{module_layout.int_rva:X}")
+        print(f"  INT size:          0x{module_layout.int_size:X}")
+        print(f"  IAT RVA:           0x{module_layout.iat_rva:X}")
+        print(f"  IAT size:          0x{module_layout.iat_size:X}")
+        print(f"  Imports:           {len(module.imports)}")
+
+        if module_layout.int_rva % 8 != 0:
+            raise RuntimeError(
+                f"{module.name} INT is not 8-byte aligned"
+            )
+
+        if module_layout.iat_rva % 8 != 0:
+            raise RuntimeError(
+                f"{module.name} IAT is not 8-byte aligned"
+            )
+
+        expected_thunk_size = (len(module.imports) + 1) * 8
+
+        if module_layout.int_size != expected_thunk_size:
+            raise RuntimeError(
+                f"{module.name} INT size is incorrect"
+            )
+
+        if module_layout.iat_size != expected_thunk_size:
+            raise RuntimeError(
+                f"{module.name} IAT size is incorrect"
+            )
+
+    print()
+    print("Layout Summary:")
+    print(f"Modules:             {len(layout.modules)}")
+    print(f"Imports:             {layout_import_total}")
+    print(f"Section size:        0x{layout.section_size:X}")
+
+    if layout_import_total != len(resolved_imports):
+        raise RuntimeError(
+            "Import layout lost or duplicated imports"
+        )
+
 
 finally:
     debugger.close()
