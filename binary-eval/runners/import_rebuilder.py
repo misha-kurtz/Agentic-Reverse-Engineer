@@ -11,8 +11,8 @@ import_rebuilder.py
     write rebuilt import structures into reconstructed PE
 
 '''
-from dataclasses import dataclass
 from __future__ import annotations
+from dataclasses import dataclass
 
 from collections import defaultdict
 
