@@ -64,12 +64,24 @@ compare parsed import count
 ↓
 verify recovered OEP
 
-NOTE: RVA currently hardcoded as 0x30000
+NOTE: .scy RVA currently hardcoded as 0x30000
 '''
+
 
 from pathlib import Path
 import struct
 import pefile
+
+from capstone import (
+    Cs,
+    CS_ARCH_X86,
+    CS_MODE_64,
+)
+
+from capstone.x86_const import (
+    X86_OP_MEM,
+    X86_REG_RIP,
+)
 
 from runners.debugger import CdbDebugger
 from runners.iat import ThunkStatus
@@ -83,6 +95,7 @@ from runners.import_rebuilder import (
 )
 from workflows.payload_recovery.runtime_unpack import RuntimeUnpacker
 
+
 CDB = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
 
 sample = Path(r"C:\analysis\ransomware_packed.exe")
@@ -90,6 +103,7 @@ sample = Path(r"C:\analysis\ransomware_packed.exe")
 debugger = CdbDebugger(cdb_path=CDB)
 
 unpacker = RuntimeUnpacker(debugger=debugger)
+
 
 def read_c_string(
     data: bytes,
@@ -369,6 +383,156 @@ def verify_import_section(
         "[debug] Null descriptor verified"
     )
 
+# Verify IAT reference patches.
+# instruction RVA + instruction size + new disp32 == expected new .scy IAT RVA
+def verify_iat_reference_patches(
+    output_data: bytearray,
+    pe,
+    patch_result,
+) -> None:
+
+    disassembler = Cs(
+        CS_ARCH_X86,
+        CS_MODE_64,
+    )
+
+    disassembler.detail = True
+
+    verified = 0
+
+    print()
+    print("[debug] Verifying patched IAT references:")
+
+    for patch in patch_result.patches:
+        containing_section = None
+
+        for section in pe.sections:
+            section_start = section.VirtualAddress
+
+            section_end = (
+                section_start
+                + max(
+                    section.Misc_VirtualSize,
+                    section.SizeOfRawData,
+                )
+            )
+
+            if (
+                section_start
+                <= patch.instruction_rva
+                < section_end
+            ):
+                containing_section = section
+                break
+
+        if containing_section is None:
+            raise RuntimeError(
+                f"Patched instruction RVA "
+                f"0x{patch.instruction_rva:X} "
+                "does not belong to a PE section"
+            )
+
+        instruction_offset = (
+            containing_section.PointerToRawData
+            + (
+                patch.instruction_rva
+                - containing_section.VirtualAddress
+            )
+        )
+
+        instruction_bytes = bytes(
+            output_data[
+                instruction_offset:
+                instruction_offset + 15
+            ]
+        )
+
+        instructions = list(
+            disassembler.disasm(
+                instruction_bytes,
+                patch.instruction_rva,
+                count=1,
+            )
+        )
+
+        if not instructions:
+            raise RuntimeError(
+                f"Unable to disassemble patched instruction "
+                f"at RVA 0x{patch.instruction_rva:X}"
+            )
+
+        instruction = instructions[0]
+
+        resolved_target = None
+
+        for operand in instruction.operands:
+            if operand.type != X86_OP_MEM:
+                continue
+
+            if operand.mem.base != X86_REG_RIP:
+                continue
+
+            resolved_target = (
+                instruction.address
+                + instruction.size
+                + operand.mem.disp
+            )
+
+            break
+
+        if resolved_target is None:
+            raise RuntimeError(
+                f"Patched instruction at "
+                f"RVA 0x{patch.instruction_rva:X} "
+                "no longer contains a RIP-relative memory operand"
+            )
+
+        if resolved_target != patch.new_slot_rva:
+            raise RuntimeError(
+                f"Incorrect patched target at "
+                f"RVA 0x{patch.instruction_rva:X}: "
+                f"expected 0x{patch.new_slot_rva:X}, "
+                f"got 0x{resolved_target:X}"
+            )
+
+        if patch.function_name is not None:
+            symbol = (
+                f"{patch.module_name}!"
+                f"{patch.function_name}"
+            )
+        else:
+            symbol = (
+                f"{patch.module_name}!"
+                f"ordinal_{patch.ordinal}"
+            )
+
+        print(
+            f"RVA 0x{patch.instruction_rva:X}: "
+            f"{instruction.mnemonic} "
+            f"{instruction.op_str} "
+            f"-> 0x{resolved_target:X} "
+            f"{symbol}"
+        )
+
+        verified += 1
+
+    if verified != patch_result.patch_count:
+        raise RuntimeError(
+            "Not every IAT reference patch was verified"
+        )
+
+    print()
+    print("IAT Patch Verification Summary:")
+    print(
+        f"Patches reported:    "
+        f"{patch_result.patch_count}"
+    )
+    print(
+        f"Patches verified:    "
+        f"{verified}"
+    )
+
+
 try:
     result = unpacker.run(sample)
 
@@ -477,7 +641,6 @@ try:
                 f"{symbol}"
             )
 
-    
     #
     # Test import section layout calculation.
     #
@@ -656,11 +819,10 @@ try:
         pointer_size=8,
     )
 
- 
     #
     # Test PE reconstruction with rebuilt import section.
     #
-    reconstructed_path = Path(r"C:\analysis\ransomware_reconstructed.exe")
+    reconstructed_path = Path(r"C:\analysis\bind_shell_reconstructed.exe")
 
     reconstructor = PEReconstructor(memory_dump_path=result.dump_path)
 
@@ -669,6 +831,11 @@ try:
         oep_rva=result.oep_rva,
         import_modules=import_modules,
     )
+
+    if reconstruction_result.iat_patch_result is None:
+        raise RuntimeError(
+            "PE reconstruction did not produce an IAT patch result"
+        )
 
     print()
     print("[debug] PE reconstruction:")
@@ -689,11 +856,21 @@ try:
         )
 
     #
-    # Parse reconstructed PE independently.
+    # Reopen/parse reconstructed PE via pefile.
     #
     rebuilt = pefile.PE(
         str(reconstructed_path),
         fast_load=False,
+    )
+
+    reconstructed_data = bytearray(reconstructed_path.read_bytes())
+
+    verify_iat_reference_patches(
+        output_data=reconstructed_data,
+        pe=rebuilt,
+        patch_result=(
+            reconstruction_result.iat_patch_result
+        ),
     )
 
     print()
@@ -832,7 +1009,6 @@ try:
             print(
                 f"  {symbol}"
             )
-
 
 
 finally:

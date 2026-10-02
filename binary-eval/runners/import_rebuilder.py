@@ -46,6 +46,15 @@ class ImportLayout:
     def section_end_rva(self) -> int:
         return self.section_rva + self.section_size
 
+@dataclass(frozen=True)
+class IATRelocation:
+    old_slot_va: int
+    old_slot_rva: int
+    new_slot_rva: int
+    module_name: str
+    function_name: str | None
+    ordinal: int | None
+
 def group_imports_by_module(
     imports: list[ResolvedImport],
 ) -> dict[str, list[ResolvedImport]]:
@@ -401,3 +410,47 @@ def build_import_section(
         #
 
     return bytes(data)
+
+# Build old IAT -> new IAT mapping (old slot RVA -> new slot RVA)
+def build_iat_relocations(
+    layout: ImportLayout,
+    image_base: int,
+    pointer_size: int = 8,
+) -> tuple[IATRelocation, ...]:
+
+    relocations: list[IATRelocation] = []
+
+    for module_layout in layout.modules:
+        module = module_layout.module
+
+        for index, resolved in enumerate(
+            module.imports
+        ):
+            old_slot_rva = (
+                resolved.slot_va
+                - image_base
+            )
+
+            if old_slot_rva < 0:
+                raise ValueError(
+                    f"Import slot 0x{resolved.slot_va:X} "
+                    "is below the image base"
+                )
+
+            new_slot_rva = (
+                module_layout.iat_rva
+                + (index * pointer_size)
+            )
+
+            relocations.append(
+                IATRelocation(
+                    old_slot_va=resolved.slot_va,
+                    old_slot_rva=old_slot_rva,
+                    new_slot_rva=new_slot_rva,
+                    module_name=module.name,
+                    function_name=resolved.function_name,
+                    ordinal=resolved.ordinal,
+                )
+            )
+
+    return tuple(relocations)

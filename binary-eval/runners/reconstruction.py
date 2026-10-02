@@ -23,9 +23,14 @@ from pathlib import Path
 
 import pefile
 
+from runners.iat_patcher import (
+    IATPatchResult,
+    IATReferencePatcher,
+)
+
 from runners.import_rebuilder import (
-    ImportLayout,
     ImportModule,
+    build_iat_relocations,
     build_import_section,
     calculate_layout,
 )
@@ -56,6 +61,8 @@ class ReconstructionResult:
     section_alignment: int
 
     sections: tuple[ReconstructedSection, ...]
+
+    iat_patch_result: IATPatchResult | None = None
 
     @property
     def output_size(self) -> int:
@@ -427,6 +434,8 @@ class PEReconstructor:
             self.pe.OPTIONAL_HEADER.AddressOfEntryPoint
         )
 
+        iat_patch_result = None
+
         #
         # Start the first section after the PE headers.
         #
@@ -629,6 +638,7 @@ class PEReconstructor:
                 pointer_size=8,
             )
 
+
             import_section_data = (
                 build_import_section(
                     import_layout,
@@ -654,6 +664,55 @@ class PEReconstructor:
                 ),
             )
 
+            # Build old IAT -> new IAT relocations/mapping
+            iat_relocations = build_iat_relocations(
+                import_layout,
+                image_base=self.pe.OPTIONAL_HEADER.ImageBase,
+                pointer_size=8,
+            )
+
+            # Patch existing reconstructed sections
+            iat_patcher = IATReferencePatcher(self.pe)
+
+            iat_patch_result = iat_patcher.patch(
+                output_data=output_data,
+                relocations=iat_relocations,
+            )
+
+            print()
+            print("[debug] IAT reference patches:")
+            print(
+                f"Relocations available: "
+                f"{len(iat_relocations)}"
+            )
+            print(
+                f"Unique slots referenced: "
+                f"{iat_patch_result.referenced_slot_count}"
+            )
+            print(
+                f"Instructions patched: "
+                f"{iat_patch_result.patch_count}"
+            )
+
+            for patch in iat_patch_result.patches:
+                if patch.function_name is not None:
+                    symbol = (
+                        f"{patch.module_name}!"
+                        f"{patch.function_name}"
+                    )
+                else:
+                    symbol = (
+                        f"{patch.module_name}!"
+                        f"ordinal_{patch.ordinal}"
+                    )
+
+                print(
+                    f"RVA 0x{patch.instruction_rva:X}: "
+                    f"0x{patch.old_slot_rva:X} "
+                    f"-> 0x{patch.new_slot_rva:X} "
+                    f"{symbol}"
+                )
+
             reconstructed_sections.append(
                 import_section
             )
@@ -661,6 +720,8 @@ class PEReconstructor:
         output_path.write_bytes(
             output_data
         )
+
+ 
 
         #
         # Final structural validation.
@@ -698,4 +759,5 @@ class PEReconstructor:
             sections=tuple(
                 reconstructed_sections
             ),
+            iat_patch_result=iat_patch_result,
         )
