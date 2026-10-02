@@ -645,12 +645,41 @@ try:
     #
     # Test import section layout calculation.
     #
-    section_rva = 0x30000
+        #
+    # Test import section layout calculation.
+    #
+    test_pe = pefile.PE(
+        data=result.dump_path.read_bytes(),
+        fast_load=False,
+    )
+
+    last_section = test_pe.sections[-1]
+
+    last_section_end = (
+        last_section.VirtualAddress
+        + max(
+            last_section.Misc_VirtualSize,
+            last_section.SizeOfRawData,
+        )
+    )
+
+    section_alignment = (
+        test_pe.OPTIONAL_HEADER.SectionAlignment
+    )
+
+    section_rva = (
+        last_section_end
+        + section_alignment
+        - 1
+    ) & ~(section_alignment - 1)
+
+    test_pe.close()
 
     layout = calculate_layout(
         import_modules,
         section_rva=section_rva,
     )
+
 
     print()
     print("[debug] Import section layout:")
