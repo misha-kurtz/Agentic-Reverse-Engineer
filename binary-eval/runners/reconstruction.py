@@ -26,6 +26,7 @@ import pefile
 from runners.iat_patcher import (
     IATPatchResult,
     IATReferencePatcher,
+    UnpackerRegion,
 )
 
 from runners.import_rebuilder import (
@@ -197,6 +198,31 @@ class PEReconstructor:
         return self._align(
             last_section_end,
             section_alignment,
+        )
+
+    def _find_section_containing_rva(
+        self,
+        pe: pefile.PE,
+        rva: int,
+    ):
+
+        for section in pe.sections:
+            start = section.VirtualAddress
+
+            end = (
+                start
+                + max(
+                    section.Misc_VirtualSize,
+                    section.SizeOfRawData,
+                )
+            )
+
+            if start <= rva < end:
+                return section
+
+        raise ReconstructionError(
+            f"RVA 0x{rva:X} is not contained "
+            "in any reconstructed PE section"
         )
 
     # Update the import directory in the reconstructed PE file.
@@ -387,6 +413,8 @@ class PEReconstructor:
         oep_rva: int,
         import_modules: tuple[ImportModule, ...] | None = None,
         runtime_image_base: int | None = None,
+        packed_entry_rva: int | None = None,
+        stub_jump_rva: int | None = None,
     ) -> ReconstructionResult:
 
         '''
@@ -693,8 +721,63 @@ class PEReconstructor:
                     fast_load=False,
                 )
 
+                if packed_entry_rva is None:
+                    raise ReconstructionError(
+                        "packed_entry_rva is required "
+                        "for IAT reference patching"
+                    )
+
+                if stub_exit_jump_rva is None:
+                    raise ReconstructionError(
+                        "stub_exit_jump_rva is required "
+                        "for IAT reference patching"
+                    )
+
+                entry_section = (
+                    self._find_section_containing_rva(
+                        patch_pe,
+                        packed_entry_rva,
+                    )
+                )
+
+                exit_section = (
+                    self._find_section_containing_rva(
+                        patch_pe,
+                        stub_exit_jump_rva,
+                    )
+                )
+
+                if (
+                    entry_section.VirtualAddress
+                    != exit_section.VirtualAddress
+                ):
+                    raise ReconstructionError(
+                        "Packed entry point and stub-exit JMP "
+                        "are not in the same reconstructed section"
+                    )
+
+                stub_section_start = (
+                    entry_section.VirtualAddress
+                )
+
+                stub_section_end = (
+                    stub_section_start
+                    + max(
+                        entry_section.Misc_VirtualSize,
+                        entry_section.SizeOfRawData,
+                    )
+                )
+
+                unpacker_region = UnpackerRegion(
+                    entry_rva=packed_entry_rva,
+                    exit_jump_rva=stub_jump_rva,
+                    section_rva=stub_section_start,
+                    section_end_rva=stub_section_end,
+                )
+
                 iat_patcher = IATReferencePatcher(
-                    patch_pe
+                    pe=patch_pe,
+                    unpacker_region=unpacker_region,
                 )
 
                 iat_patch_result = iat_patcher.patch(
@@ -788,3 +871,4 @@ class PEReconstructor:
             ),
             iat_patch_result=iat_patch_result,
         )
+    

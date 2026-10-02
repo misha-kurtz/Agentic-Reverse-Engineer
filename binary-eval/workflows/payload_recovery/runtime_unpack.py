@@ -54,6 +54,7 @@ class UnpackResult:
     saved_rbx_slot: int
 
     stub_jump_va: int
+    stub_jump_rva: int
 
     oep_va: int
     oep_rva: int
@@ -425,6 +426,12 @@ class RuntimeUnpacker:
                 - image_base
             )
 
+            # Calculate stub exit jump RVA
+            stub_jump_rva = (
+                jump.source
+                - image_base
+            )
+
             #
             # 12. Enumerate all modules currently loaded in the
             #     debuggee now that execution is paused at the OEP.
@@ -521,6 +528,7 @@ class RuntimeUnpacker:
                 saved_rbx_slot=saved_rbx_slot,
 
                 stub_jump_va=jump.source,
+                stub_jump_rva=stub_jump_rva,
 
                 oep_va=oep_va,
                 oep_rva=oep_rva,

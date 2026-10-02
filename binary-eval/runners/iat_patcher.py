@@ -53,12 +53,33 @@ class IATPatchResult:
         return len(self.referenced_slots)
 
 
+@dataclass(frozen=True)
+class UnpackerRegion:
+    entry_rva: int
+    exit_jump_rva: int
+    section_rva: int
+    section_end_rva: int
+
+    def contains(
+        self,
+        rva: int,
+    ) -> bool:
+
+        return (
+            self.section_rva
+            <= rva
+            < self.section_end_rva
+        )
+
+
 class IATReferencePatcher:
     def __init__(
         self,
         pe: pefile.PE,
+        unpacker_region: UnpackerRegion,
     ):
         self.pe = pe
+        self.unpacker_region = unpacker_region
 
         self.disassembler = Cs(
             CS_ARCH_X86,
@@ -66,25 +87,39 @@ class IATReferencePatcher:
         )
 
         self.disassembler.detail = True
-
-        #
-        # Continue disassembly across embedded data or
-        # otherwise undecodable bytes in executable sections.
-        #
         self.disassembler.skipdata = True
 
-    # Scan only executable sections
-    def _is_executable(
+    # Scan executable sections except the runtime-identified unpacker section
+    def _should_scan_section(
         self,
         section,
     ) -> bool:
 
-        return bool(
+        #
+        # Scan only executable sections.
+        #
+        if not (
             section.Characteristics
-            & 0x20000000  # IMAGE_SCN_MEM_EXECUTE = 0x20000000
+            & 0x20000000
+        ):
+            return False
+
+        section_start = (
+            section.VirtualAddress
         )
 
-    # Find RIP-relative references 
+        #
+        # Exclude the runtime-identified unpacker
+        # stub section.
+        #
+        if (
+            section_start
+            == self.unpacker_region.section_rva
+        ):
+            return False
+
+        return True
+
     def patch(
         self,
         output_data: bytearray,
@@ -100,7 +135,9 @@ class IATReferencePatcher:
         referenced_slots: set[int] = set()
 
         for section in self.pe.sections:
-            if not self._is_executable(section):
+            if not self._should_scan_section(
+                section
+            ):
                 continue
 
             section_rva = (
@@ -158,7 +195,6 @@ class IATReferencePatcher:
                 sorted(referenced_slots)
             ),
         )
-
 
     # Examine each instruction's memory operands
     def _patch_instruction(

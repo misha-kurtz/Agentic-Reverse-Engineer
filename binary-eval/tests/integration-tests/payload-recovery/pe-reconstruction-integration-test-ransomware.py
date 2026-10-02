@@ -855,6 +855,8 @@ try:
         oep_rva=result.oep_rva,
         import_modules=import_modules,
         runtime_image_base=result.image_base,
+        packed_entry_rva=result.packed_entry_rva,
+        stub_jump_rva=result.stub_jump_rva,
     )
 
     if reconstruction_result.iat_patch_result is None:
