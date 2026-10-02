@@ -724,9 +724,9 @@ try:
             .decode(errors="replace")
         )
 
-    if section_name == ".scy":
-        scy_section = section
-        break
+        if section_name == ".scy":
+            scy_section = section
+            break
 
     if scy_section is None:
         raise RuntimeError(
