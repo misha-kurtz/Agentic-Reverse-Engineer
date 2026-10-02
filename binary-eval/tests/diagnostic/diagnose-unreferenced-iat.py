@@ -1,5 +1,4 @@
 from pathlib import Path
-import struct
 
 import pefile
 
@@ -9,30 +8,26 @@ from capstone import (
     CS_MODE_64,
 )
 
-from capstone.x86_const import (
-    X86_OP_IMM,
-    X86_OP_MEM,
-    X86_REG_RIP,
+
+RECONSTRUCTED = Path(
+    r"C:\analysis\bind_shell_reconstructed.exe"
+)
+
+ORIGINAL = Path(
+    r"C:\analysis\bind.exe"
 )
 
 
-RECONSTRUCTED = Path(r"C:\analysis\bind_shell_reconstructed.exe")
-
-# Optional comparison against the original clean,
-# pre-UPX bind shell.
-ORIGINAL = Path(r"C:\analysis\bind.exe")
-
-
-TARGETS = {
-    0x16008: "KERNEL32.dll!WriteConsoleW",
-    0x16010: "KERNEL32.dll!CreateFileW",
-    0x16018: "ntdll.dll!RtlReAllocateHeap",
-    0x16020: "ntdll.dll!RtlSizeHeap",
-    0x16220: "KERNEL32.dll!SetEnvironmentVariableW",
+TARGET_RVAS = {
+    0x1246E: "SetEnvironmentVariableW",
+    0x13D46: "CreateFileW",
+    0x13DB4: "WriteConsoleW",
+    0x13E09: "CreateFileW",
+    0x13E2B: "WriteConsoleW",
 }
 
 
-def scan_pe(
+def inspect_target_rvas(
     path: Path,
     target_rvas: dict[int, str],
 ) -> None:
@@ -41,6 +36,10 @@ def scan_pe(
     print("=" * 80)
     print(f"Scanning: {path}")
     print("=" * 80)
+
+    if not path.exists():
+        print("[error] File does not exist")
+        return
 
     pe = pefile.PE(
         str(path),
@@ -56,212 +55,151 @@ def scan_pe(
 
     disassembler.detail = True
 
-    image_base = (
-        pe.OPTIONAL_HEADER.ImageBase
-    )
+    for target_rva, symbol in target_rvas.items():
 
-    hits: dict[int, list[str]] = {
-        rva: []
-        for rva in target_rvas
-    }
+        print()
+        print(
+            f"=== RVA 0x{target_rva:X} "
+            f"({symbol}) ==="
+        )
 
-    for section in pe.sections:
-        if not (
-            section.Characteristics
-            & 0x20000000
-        ):
+        containing_section = None
+
+        for section in pe.sections:
+            section_start = (
+                section.VirtualAddress
+            )
+
+            section_end = (
+                section_start
+                + max(
+                    section.Misc_VirtualSize,
+                    section.SizeOfRawData,
+                )
+            )
+
+            if (
+                section_start
+                <= target_rva
+                < section_end
+            ):
+                containing_section = section
+                break
+
+        if containing_section is None:
+            print(
+                "RVA is not contained "
+                "in any section"
+            )
             continue
 
         section_name = (
-            section.Name
+            containing_section.Name
             .rstrip(b"\x00")
             .decode(errors="replace")
         )
 
-        section_rva = (
-            section.VirtualAddress
+        file_offset = (
+            containing_section.PointerToRawData
+            + (
+                target_rva
+                - containing_section.VirtualAddress
+            )
         )
 
-        raw_offset = (
-            section.PointerToRawData
-        )
-
-        raw_size = (
-            section.SizeOfRawData
-        )
-
-        if raw_size == 0:
-            continue
-
-        section_data = data[
-            raw_offset:
-            raw_offset + raw_size
-        ]
-
-        print()
         print(
-            f"[debug] Scanning executable section "
-            f"{section_name} "
-            f"RVA 0x{section_rva:X}"
+            f"Section: {section_name}"
         )
 
-        for instruction in (
-            disassembler.disasm(
-                section_data,
-                section_rva,
-            )
-        ):
-            for operand in instruction.operands:
-
-                #
-                # RIP-relative memory reference.
-                #
-                if (
-                    operand.type == X86_OP_MEM
-                    and operand.mem.base == X86_REG_RIP
-                ):
-                    target_rva = (
-                        instruction.address
-                        + instruction.size
-                        + operand.mem.disp
-                    )
-
-                    if target_rva in target_rvas:
-                        hits[target_rva].append(
-                            (
-                                f"RIP-relative: "
-                                f"RVA 0x{instruction.address:X}: "
-                                f"{instruction.mnemonic} "
-                                f"{instruction.op_str}"
-                            )
-                        )
-
-                #
-                # Immediate RVA.
-                #
-                elif operand.type == X86_OP_IMM:
-                    immediate = operand.imm
-
-                    if immediate in target_rvas:
-                        hits[immediate].append(
-                            (
-                                f"Immediate RVA: "
-                                f"RVA 0x{instruction.address:X}: "
-                                f"{instruction.mnemonic} "
-                                f"{instruction.op_str}"
-                            )
-                        )
-
-                    #
-                    # Absolute VA form.
-                    #
-                    absolute_rva = (
-                        immediate
-                        - image_base
-                    )
-
-                    if absolute_rva in target_rvas:
-                        hits[absolute_rva].append(
-                            (
-                                f"Immediate VA: "
-                                f"RVA 0x{instruction.address:X}: "
-                                f"{instruction.mnemonic} "
-                                f"{instruction.op_str}"
-                            )
-                        )
-
-    #
-    # Raw byte search for the RVA encoded directly.
-    #
-    for target_rva, symbol in target_rvas.items():
-        encoded_rva = struct.pack(
-            "<I",
-            target_rva,
-        )
-
-        start = 0
-
-        while True:
-            offset = data.find(
-                encoded_rva,
-                start,
-            )
-
-            if offset == -1:
-                break
-
-            hits[target_rva].append(
-                f"Raw 32-bit RVA bytes at file offset 0x{offset:X}"
-            )
-
-            start = offset + 1
-
-        absolute_va = (
-            image_base
-            + target_rva
-        )
-
-        encoded_va = struct.pack(
-            "<Q",
-            absolute_va,
-        )
-
-        start = 0
-
-        while True:
-            offset = data.find(
-                encoded_va,
-                start,
-            )
-
-            if offset == -1:
-                break
-
-            hits[target_rva].append(
-                f"Raw 64-bit VA bytes at file offset 0x{offset:X}"
-            )
-
-            start = offset + 1
-
-    print()
-    print("[debug] Unreferenced-IAT diagnostic results:")
-
-    for target_rva, symbol in target_rvas.items():
-        print()
         print(
-            f"0x{target_rva:X} "
-            f"{symbol}"
+            f"File offset: 0x{file_offset:X}"
         )
 
-        references = hits[
+        #
+        # Start 16 bytes before the target so we can
+        # see some surrounding instructions.
+        #
+        context_start_offset = max(
+            file_offset - 16,
+            0,
+        )
+
+        context_start_rva = (
             target_rva
+            - (
+                file_offset
+                - context_start_offset
+            )
+        )
+
+        context_end_offset = min(
+            file_offset + 32,
+            len(data),
+        )
+
+        code = data[
+            context_start_offset:
+            context_end_offset
         ]
 
-        if not references:
-            print(
-                "  No references found"
+        instructions = list(
+            disassembler.disasm(
+                code,
+                context_start_rva,
             )
+        )
 
+        if not instructions:
+            print(
+                "No instructions decoded"
+            )
             continue
 
-        for reference in references:
+        found_exact_target = False
+
+        for instruction in instructions:
+
+            marker = ""
+
+            if (
+                instruction.address
+                == target_rva
+            ):
+                marker = "  <-- TARGET"
+                found_exact_target = True
+
             print(
-                f"  {reference}"
+                f"0x{instruction.address:05X}: "
+                f"{instruction.mnemonic:<8} "
+                f"{instruction.op_str}"
+                f"{marker}"
+            )
+
+        if not found_exact_target:
+            print()
+            print(
+                "[warning] Capstone did not "
+                "decode an instruction beginning "
+                "exactly at the target RVA."
             )
 
     pe.close()
 
 
-scan_pe(
+print(
+    "[debug] diagnostic script started"
+)
+
+inspect_target_rvas(
     RECONSTRUCTED,
-    TARGETS,
+    TARGET_RVAS,
 )
 
 
 if ORIGINAL.exists():
-    scan_pe(
+    inspect_target_rvas(
         ORIGINAL,
-        TARGETS,
+        TARGET_RVAS,
     )
 else:
     print()
@@ -270,14 +208,7 @@ else:
         "not found; skipping comparison."
     )
 
-print("[debug] diagnostic script started")
 
-print(f"[debug] reconstructed path: {RECONSTRUCTED}")
-print(f"[debug] exists: {RECONSTRUCTED.exists()}")
-
-scan_pe(
-    RECONSTRUCTED,
-    TARGETS,
+print(
+    "[debug] diagnostic script finished"
 )
-
-print("[debug] diagnostic script finished")
