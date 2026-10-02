@@ -123,6 +123,11 @@ class IATReferencePatcher:
                     "reconstructed file"
                 )
 
+            #
+            # Preserve the original section bytes before
+            # applying any patches. Both scanning passes
+            # operate on this immutable snapshot.
+            #
             section_data = bytes(
                 output_data[
                     section_raw_offset:
@@ -130,6 +135,11 @@ class IATReferencePatcher:
                 ]
             )
 
+            '''
+            Primary pass:
+            Perform normal linear disassembly across the
+            executable section.
+            '''
             for instruction in (
                 self.disassembler.disasm(
                     section_data,
@@ -146,12 +156,108 @@ class IATReferencePatcher:
                     referenced_slots=referenced_slots,
                 )
 
+            '''
+            Fallback pass:
+            Capstone linear disassembly can lose synchronization
+            when executable sections contain embedded data,
+            alignment regions, or other non-instruction bytes.
+
+            Decode independently from every byte offset, but only
+            consider IAT slots that were not found by the primary
+            pass.
+            '''
+            missing_relocations = {
+                old_slot_rva: relocation
+                for old_slot_rva, relocation
+                in relocation_map.items()
+                if old_slot_rva not in referenced_slots
+            }
+
+            if missing_relocations:
+                self._scan_section_fallback(
+                    output_data=output_data,
+                    section_data=section_data,
+                    section_rva=section_rva,
+                    section_raw_offset=section_raw_offset,
+                    relocation_map=missing_relocations,
+                    patches=patches,
+                    referenced_slots=referenced_slots,
+                )
+
         return IATPatchResult(
             patches=tuple(patches),
             referenced_slots=tuple(
                 sorted(referenced_slots)
             ),
         )
+
+    # Byte-by-byte fallback scan for missing IAT relocations.
+    def _scan_section_fallback(
+        self,
+        output_data: bytearray,
+        section_data: bytes,
+        section_rva: int,
+        section_raw_offset: int,
+        relocation_map: dict[int, IATRelocation],
+        patches: list[IATReferencePatch],
+        referenced_slots: set[int],
+    ) -> None:
+
+        #
+        # Maximum x86/x64 instruction length is 15 bytes.
+        #
+        max_instruction_length = 15
+
+        for offset in range(len(section_data)):
+
+            #
+            # Once every relocation requested for this fallback
+            # pass has been referenced, there is nothing left
+            # to search for in this section.
+            #
+            if all(
+                old_slot_rva in referenced_slots
+                for old_slot_rva in relocation_map
+            ):
+                break
+
+            instruction_rva = (
+                section_rva
+                + offset
+            )
+
+            instruction_bytes = section_data[
+                offset:
+                offset + max_instruction_length
+            ]
+
+            instructions = list(
+                self.disassembler.disasm(
+                    instruction_bytes,
+                    instruction_rva,
+                    count=1,
+                )
+            )
+
+            if not instructions:
+                continue
+
+            instruction = instructions[0]
+
+            self._patch_instruction(
+                output_data=output_data,
+                instruction=instruction,
+                section_rva=section_rva,
+                section_raw_offset=section_raw_offset,
+                relocation_map={
+                    old_slot_rva: relocation
+                    for old_slot_rva, relocation
+                    in relocation_map.items()
+                    if old_slot_rva not in referenced_slots
+                },
+                patches=patches,
+                referenced_slots=referenced_slots,
+            )
 
     # Examine each instruction's memory operands
     def _patch_instruction(
