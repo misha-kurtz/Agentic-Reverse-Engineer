@@ -99,6 +99,7 @@ from workflows.payload_recovery.runtime_unpack import RuntimeUnpacker
 CDB = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
 
 sample = Path(r"C:\analysis\bind_shell_packed.exe")
+reconstructed_path = Path(r"C:\analysis\bind_shell_reconstructed.exe")
 
 debugger = CdbDebugger(cdb_path=CDB)
 
@@ -822,8 +823,6 @@ try:
     #
     # Test PE reconstruction with rebuilt import section.
     #
-    reconstructed_path = Path(r"C:\analysis\bind_shell_reconstructed.exe")
-
     reconstructor = PEReconstructor(memory_dump_path=result.dump_path)
 
     reconstruction_result = reconstructor.reconstruct(
