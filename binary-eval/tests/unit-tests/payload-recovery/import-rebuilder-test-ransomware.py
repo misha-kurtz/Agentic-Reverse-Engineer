@@ -1,5 +1,5 @@
 '''
-Updated Memory Dump/PE reconstruction test.
+Updated Memory Dump/Import Rebuilder/PE reconstruction test.
 
 Tests:
 
@@ -9,6 +9,7 @@ Tests:
 4. Resolved imports are grouped correctly by DLL.
 5. Layout calculcation.
 6. Binary serialization.
+7. Serialized import section parser-style verification.
 
 runtime unpack
     ↓
@@ -614,12 +615,6 @@ try:
 
     print()
     print("[debug] Null import descriptor: OK")
-
-    
-    section_data = build_import_section(
-        layout,
-        pointer_size=8,
-    )
 
     print()
     print("[debug] Serialized import section:")

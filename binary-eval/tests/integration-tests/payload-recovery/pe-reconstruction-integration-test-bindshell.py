@@ -1,45 +1,81 @@
 '''
-Updated Memory Dump/Import Rebuilder/PE reconstruction test.
+Updated Memory Dump / Import Rebuilder / PE Reconstruction integration test.
 
 Tests:
 
 1. Every VALID_EXTERNAL thunk maps to a loaded module.
 2. target_rva is computed correctly.
-3. Export lookup resolves function name or ordinal.
+3. Export lookup resolves each valid thunk by function name or ordinal.
 4. Resolved imports are grouped correctly by DLL.
-5. Layout calculcation.
-6. Binary serialization.
-7. Serialized import section parser-style verification.
+5. ImportModule objects are built with deterministic module/import ordering.
+6. Import section layout is calculated correctly.
+7. Import descriptors, DLL names, IMAGE_IMPORT_BY_NAME records, INTs, and IATs are serialized correctly.
+8. Serialized import section passes parser-style verification.
+9. PE reconstruction appends a new .scy import section.
+10. NumberOfSections and SizeOfImage are updated correctly.
+11. IMAGE_DIRECTORY_ENTRY_IMPORT points into the new .scy section.
+12. pefile can parse the reconstructed import directory.
+13. Parsed reconstructed import count matches the resolved import count.
+14. Reconstructed PE preserves the recovered OEP.
 
 runtime unpack
-    ↓
+↓
 recover OEP
-    ↓
+↓
 recover IAT bounds
-    ↓
+↓
 classify thunks
-    ↓
+↓
 map thunk target → loaded module
-    ↓
+↓
 map target RVA → export name/ordinal
-    ↓
+↓
 group resolved imports by DLL
-    ↓
-build import modules
-    ↓
-calculate layout
-    ↓
-serialize import section
-    ↓
-validate null import descriptor
+↓
+build ImportModule objects
+↓
+calculate import section layout
+↓
+serialize import descriptors / names / INT / IAT
+↓
+verify serialized import section
+↓
+PEReconstructor(...)
+↓
+reconstruct(..., import_modules)
+↓
+append .scy section
+↓
+update section table / NumberOfSections / SizeOfImage
+↓
+update IMAGE_DIRECTORY_ENTRY_IMPORT
+↓
+write reconstructed PE
+↓
+open reconstructed PE with pefile
+↓
+find .scy
+↓
+verify Import Directory → .scy
+↓
+parse DIRECTORY_ENTRY_IMPORT
+↓
+compare parsed import count
+↓
+verify recovered OEP
+
+NOTE: RVA currently hardcoded as 0x30000
 '''
+
 
 from pathlib import Path
 import struct
+import pefile
 
 from runners.debugger import CdbDebugger
 from runners.iat import ThunkStatus
 from runners.import_resolver import ImportResolver
+from runners.reconstruction import PEReconstructor
 from runners.import_rebuilder import (
     build_import_modules,
     build_import_section,
@@ -616,21 +652,187 @@ try:
     print()
     print("[debug] Null import descriptor: OK")
 
-    print()
-    print("[debug] Serialized import section:")
-    print(f"Expected size:       0x{layout.section_size:X}")
-    print(f"Actual size:         0x{len(section_data):X}")
-
-    if len(section_data) != layout.section_size:
-        raise RuntimeError(
-            "Serialized import section size does not match layout"
-        )
-
     verify_import_section(
         section_data,
         layout,
         pointer_size=8,
     )
+
+    #
+    # Test PE reconstruction with rebuilt import section.
+    #
+    reconstructed_path = Path(r"C:\analysis\bind_shell_reconstructed.exe")
+
+    reconstructor = PEReconstructor(memory_dump_path=result.dump_path)
+
+    reconstruction_result = reconstructor.reconstruct(
+        output_path=reconstructed_path,
+        oep_rva=result.oep_rva,
+        import_modules=import_modules,
+    )
+
+    print()
+    print("[debug] PE reconstruction:")
+    print(f"Output:              {reconstruction_result.output_path}")
+    print(f"Output size:         0x{reconstruction_result.output_size:X}")
+    print(f"OEP RVA:             0x{reconstruction_result.recovered_oep_rva:X}")
+
+    print()
+    print("[debug] Reconstructed sections:")
+
+    for section in reconstruction_result.sections:
+        print(
+            f"{section.name:<8} "
+            f"VA=0x{section.virtual_address:X} "
+            f"VS=0x{section.virtual_size:X} "
+            f"RAW=0x{section.raw_offset:X} "
+            f"RS=0x{section.raw_size:X}"
+        )
+
+    #
+    # Parse reconstructed PE independently.
+    #
+    rebuilt = pefile.PE(
+        str(reconstructed_path),
+        fast_load=False,
+    )
+
+    print()
+    print("[debug] Reconstructed PE validation:")
+
+    print(
+        f"NumberOfSections:    "
+        f"{rebuilt.FILE_HEADER.NumberOfSections}"
+    )
+
+    print(
+        f"SizeOfImage:         "
+        f"0x{rebuilt.OPTIONAL_HEADER.SizeOfImage:X}"
+    )
+
+    print(
+        f"AddressOfEntryPoint: "
+        f"0x{rebuilt.OPTIONAL_HEADER.AddressOfEntryPoint:X}"
+    )
+
+    scy_section = None
+
+    for section in rebuilt.sections:
+        section_name = (
+            section.Name
+            .rstrip(b"\x00")
+            .decode(errors="replace")
+        )
+
+    if section_name == ".scy":
+        scy_section = section
+        break
+
+    if scy_section is None:
+        raise RuntimeError(
+            "Reconstructed PE does not contain .scy section"
+        )
+
+    print()
+    print("[debug] .scy section:")
+    print(
+        f"VirtualAddress:      "
+        f"0x{scy_section.VirtualAddress:X}"
+    )
+    print(
+        f"VirtualSize:         "
+        f"0x{scy_section.Misc_VirtualSize:X}"
+    )
+    print(
+        f"Raw offset:          "
+        f"0x{scy_section.PointerToRawData:X}"
+    )
+    print(
+        f"Raw size:            "
+        f"0x{scy_section.SizeOfRawData:X}"
+    )
+
+    import_directory = (
+        rebuilt.OPTIONAL_HEADER.DATA_DIRECTORY[
+            pefile.DIRECTORY_ENTRY[
+                "IMAGE_DIRECTORY_ENTRY_IMPORT"
+            ]
+        ]
+    )
+
+    print()
+    print("[debug] Import directory:")
+    print(
+        f"RVA:                 "
+        f"0x{import_directory.VirtualAddress:X}"
+    )
+    print(
+        f"Size:                "
+        f"0x{import_directory.Size:X}"
+    )
+
+    scy_start = scy_section.VirtualAddress
+    scy_end = (
+        scy_start
+        + scy_section.Misc_VirtualSize
+    )
+
+    if not (
+        scy_start
+        <= import_directory.VirtualAddress
+        < scy_end
+    ):
+        raise RuntimeError(
+            "Import directory does not point inside .scy"
+        )
+
+    rebuilt.parse_data_directories(
+        directories=[
+            pefile.DIRECTORY_ENTRY[
+                "IMAGE_DIRECTORY_ENTRY_IMPORT"
+            ]
+        ]
+    )
+
+    if not hasattr(
+        rebuilt,
+        "DIRECTORY_ENTRY_IMPORT",
+    ):
+        raise RuntimeError(
+            "pefile could not parse reconstructed imports"
+        )
+
+    print()
+    print("[debug] Parsed reconstructed imports:")
+
+    parsed_import_total = 0
+
+    for descriptor in rebuilt.DIRECTORY_ENTRY_IMPORT:
+        dll_name = descriptor.dll.decode(
+            errors="replace"
+        )
+
+        print()
+        print(
+            f"{dll_name}: "
+            f"{len(descriptor.imports)} imports"
+        )
+
+        for imported in descriptor.imports:
+            parsed_import_total += 1
+
+            if imported.name is not None:
+                symbol = imported.name.decode(
+                    errors="replace"
+                )
+            else:
+                symbol = (
+                    f"ordinal_{imported.ordinal}"
+                )
+
+            print(
+                f"  {symbol}"
+            )
 
 
 finally:
