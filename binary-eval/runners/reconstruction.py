@@ -727,9 +727,9 @@ class PEReconstructor:
                         "for IAT reference patching"
                     )
 
-                if stub_exit_jump_rva is None:
+                if stub_jump_rva is None:
                     raise ReconstructionError(
-                        "stub_exit_jump_rva is required "
+                        "stub_jump_rva is required "
                         "for IAT reference patching"
                     )
 
@@ -743,7 +743,7 @@ class PEReconstructor:
                 exit_section = (
                     self._find_section_containing_rva(
                         patch_pe,
-                        stub_exit_jump_rva,
+                        stub_jump_rva,
                     )
                 )
 
