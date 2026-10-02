@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import pefile
 
@@ -77,6 +76,33 @@ class UnpackResult:
     def iat_rva(self) -> int:
         return self.iat_start_va - self.image_base
 
+@dataclass(frozen=True)
+class SectionRange:
+    name: str
+    rva: int
+    virtual_size: int
+    characteristics: int
+    start_va: int
+    end_va: int
+
+    def contains(
+        self,
+        address: int,
+    ) -> bool:
+
+        return (
+            self.start_va
+            <= address
+            < self.end_va
+        )
+
+    @property
+    def executable(self) -> bool:
+        return bool(
+            self.characteristics
+            & 0x20000000
+        )
+
 
 class RuntimeUnpacker:
     """
@@ -92,35 +118,13 @@ class RuntimeUnpacker:
             -> OEP
     """
 
-    DEFAULT_DESTINATION_SECTIONS = (
-        ".dst",
-        "UPX0",
-    )
-
-    DEFAULT_STUB_SECTIONS = (
-        ".stub",
-        "UPX1",
-    )
-
     def __init__(
         self,
         debugger: CdbDebugger,
-        destination_sections: Iterable[str] | None = None,
-        stub_sections: Iterable[str] | None = None,
         max_stack_watch_events: int = 8,
         max_post_restore_instructions: int = 16,
     ):
         self.debugger = debugger
-
-        self.destination_sections = tuple(
-            destination_sections
-            or self.DEFAULT_DESTINATION_SECTIONS
-        )
-
-        self.stub_sections = tuple(
-            stub_sections
-            or self.DEFAULT_STUB_SECTIONS
-        )
 
         self.max_stack_watch_events = (
             max_stack_watch_events
@@ -173,15 +177,16 @@ class RuntimeUnpacker:
                 image_base=image_base,
             )
 
-            destination = self._find_section(
-                sections,
-                self.destination_sections,
+            stub = self._find_section_containing_va(
+                sections=sections,
+                address=packed_entry_va,
             )
 
-            stub = self._find_section(
-                sections,
-                self.stub_sections,
-            )
+            if not stub.executable:
+                raise RuntimeUnpackError(
+                    "Packed entry point is not located "
+                    "inside an executable section"
+                )
 
             #
             # 1. Run to packed entry point.
@@ -307,10 +312,10 @@ class RuntimeUnpacker:
             # 7. Find the following direct relative JMP
             #    from the stub into the reconstructed section.
             #
-            jump = self._find_stub_exit_jump(
+            (jump,destination) = self._find_stub_exit_jump(
                 start_va=restore_rip,
                 stub=stub,
-                destination=destination,
+                sections=sections,
             )
 
             #
@@ -629,8 +634,18 @@ class RuntimeUnpacker:
         self,
         start_va: int,
         stub: SectionRange,
-        destination: SectionRange,
-    ) -> DirectJump:
+        sections: list[SectionRange],
+    ) -> tuple[
+        DirectJump,
+        SectionRange,
+    ]:
+        '''
+        Four runtime behavioral/structural requirements for the stub-exit JMP:
+        1. Direct JMP
+        2. Source is in packed-entry-point section
+        3. Target is in a different section
+        4. Target section is executable
+        '''
 
         for instruction in (
             self.debugger.iter_instructions(
@@ -651,23 +666,53 @@ class RuntimeUnpacker:
                 continue
 
             #
-            # Required transition:
+            # The stub-exit JMP must originate from the
+            # same section containing the packed EP.
             #
-            #       .stub / UPX1
-            #              ↓
-            #       .dst / UPX0
+            if not stub.contains(
+                jump.source
+            ):
+                continue
+
+            destination = (
+                self._find_section_containing_va(
+                    sections=sections,
+                    address=jump.target,
+                    required=False,
+                )
+            )
+
+            #
+            # Ignore jumps outside the main PE image.
+            #
+            if destination is None:
+                continue
+
+            #
+            # A stub-exit transition must cross a section
+            # boundary.
             #
             if (
-                stub.contains(jump.source)
-                and destination.contains(
-                    jump.target
-                )
+                destination.rva
+                == stub.rva
             ):
-                return jump
+                continue
+
+            #
+            # Recovered execution must land in an
+            # executable destination.
+            #
+            if not destination.executable:
+                continue
+
+            return (
+                jump,
+                destination,
+            )
 
         raise RuntimeUnpackError(
-            "Could not locate direct stub-to-destination "
-            "JMP after the RBX restore"
+            "Could not locate direct inter-section "
+            "stub-exit JMP after the RBX restore"
         )
 
     # ------------------------------------------------------------------
@@ -745,12 +790,9 @@ class RuntimeUnpacker:
                 sections.append(
                     {
                         "name": name,
-                        "rva": (
-                            section.VirtualAddress
-                        ),
-                        "virtual_size": (
-                            virtual_size
-                        ),
+                        "rva": (section.VirtualAddress),
+                        "virtual_size": (virtual_size),
+                        "characteristics": (section.Characteristics),
                     }
                 )
 
@@ -797,6 +839,9 @@ class RuntimeUnpacker:
                     name=section["name"],
                     rva=section["rva"],
                     virtual_size=size,
+                    characteristics=(
+                        section["characteristics"]
+                    ),
                     start_va=start,
                     end_va=start + size,
                 )
@@ -805,32 +850,25 @@ class RuntimeUnpacker:
         return result
 
     @staticmethod
-    def _find_section(
+    def _find_section_containing_va(
         sections: list[SectionRange],
-        candidates: tuple[str, ...],
-    ) -> SectionRange:
-
-        candidate_names = {
-            name.lower()
-            for name in candidates
-        }
+        address: int,
+        required: bool = True,
+    ) -> SectionRange | None:
 
         for section in sections:
-            if (
-                section.name.lower()
-                in candidate_names
+            if section.contains(
+                address
             ):
                 return section
 
-        available = ", ".join(
-            section.name
-            for section in sections
-        )
+        if required:
+            raise RuntimeUnpackError(
+                f"Address 0x{address:X} is not "
+                "contained in any PE section"
+            )
 
-        raise RuntimeUnpackError(
-            "Could not find expected section "
-            f"{candidates}. Available: {available}"
-        )
+        return None
 
     @staticmethod
     def _align_up(
