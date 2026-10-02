@@ -71,16 +71,25 @@ class ReconstructionResult:
 
 class PEReconstructor:
     '''
-    Convert a mapped PE memory image into a disk-layout PE.
+    Convert a mapped PE memory image into a reconstructed disk-layout PE.
 
     This stage:
         - preserves the PE headers
         - patches AddressOfEntryPoint
-        - assigns new raw offsets to each section
+        - assigns new raw offsets to each existing section
         - copies section contents from RVA-based memory layout
         - updates SizeOfRawData / PointerToRawData
+        - calculates placement for the reconstructed import section
+        - appends the new .scy import section
+        - updates NumberOfSections and SizeOfImage
+        - updates IMAGE_DIRECTORY_ENTRY_IMPORT
+        - builds old-IAT -> new-IAT relocation mappings
+        - patches RIP-relative references to point to the new .scy IAT
+        - writes and validates the reconstructed PE
 
-    Import reconstruction is intentionally handled separately.
+    Import resolution and import-table construction are handled by
+    the import resolver / import rebuilder; this class integrates the
+    resulting import data into the reconstructed PE.
     '''
 
     def __init__(
@@ -377,6 +386,7 @@ class PEReconstructor:
         output_path: Path | str,
         oep_rva: int,
         import_modules: tuple[ImportModule, ...] | None = None,
+        runtime_image_base: int | None = None,
     ) -> ReconstructionResult:
 
         '''
@@ -626,6 +636,11 @@ class PEReconstructor:
             )
 
         if import_modules:
+            if runtime_image_base is None:
+                raise ReconstructionError(
+                    "runtime_image_base is required "
+                    "when rebuilding imports"
+                )
             import_section_rva = (
                 self._get_next_section_rva(
                     section_alignment
@@ -667,17 +682,29 @@ class PEReconstructor:
             # Build old IAT -> new IAT relocations/mapping
             iat_relocations = build_iat_relocations(
                 import_layout,
-                image_base=self.pe.OPTIONAL_HEADER.ImageBase,
+                image_base=runtime_image_base,
                 pointer_size=8,
             )
 
-            # Patch existing reconstructed sections
-            iat_patcher = IATReferencePatcher(self.pe)
+            try:
+                # Patch existing reconstructed sections
+                patch_pe = pefile.PE(
+                    data=bytes(output_data),
+                    fast_load=False,
+                )
 
-            iat_patch_result = iat_patcher.patch(
-                output_data=output_data,
-                relocations=iat_relocations,
-            )
+                iat_patcher = IATReferencePatcher(
+                    patch_pe
+                )
+
+                iat_patch_result = iat_patcher.patch(
+                    output_data=output_data,
+                    relocations=iat_relocations,
+                )
+
+            finally:
+                if "patch_pe" in locals():
+                    patch_pe.close()
 
             print()
             print("[debug] IAT reference patches:")

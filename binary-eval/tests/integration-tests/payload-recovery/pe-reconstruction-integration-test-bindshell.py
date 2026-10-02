@@ -830,6 +830,7 @@ try:
         output_path=reconstructed_path,
         oep_rva=result.oep_rva,
         import_modules=import_modules,
+        runtime_image_base=result.image_base,
     )
 
     if reconstruction_result.iat_patch_result is None:
