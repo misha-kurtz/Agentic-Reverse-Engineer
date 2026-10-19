@@ -584,50 +584,71 @@ class RuntimeDecryptor:
         '''
         Follow execution after VirtualAlloc returns.
 
-        Identify REP MOVSQ by disassembly and correlate
-        the copy with the observed allocation.
+        Identify the REP MOVSQ instruction using its machine-code
+        encoding rather than relying exclusively on debugger
+        disassembly formatting.
+
+        Validate:
+            - destination matches the observed allocation
+            - copy size matches the allocation size
+            - source and destination are nonzero
+
+        Once identified, stop immediately after the copy and
+        validate the resulting register state.
         '''
 
-        for instruction_index in range(self.max_copy_instructions):
+        for instruction_index in range(
+            self.max_copy_instructions
+        ):
             rip = self.debugger.get_register("rip")
 
             instruction = self.debugger.disassemble_one(rip)
+
+            mnemonic = instruction.mnemonic.lower()
+            operands = instruction.operands.lower()
+
+            raw_bytes = instruction.raw_bytes
+
+            # REP MOVSQ:
+            #
+            # F3 = REP
+            # 48 = REX.W
+            # A5 = MOVS
+            #
+            # The debugger may display this as:
+            #
+            #   rep movs qword ptr [rdi], qword ptr [rsi]
+            #
+            # rather than:
+            #
+            #   rep movsq
+
+            is_rep_movsq = (
+                raw_bytes.startswith(b"\xF3\x48\xA5")
+                or raw_bytes.startswith(b"\x48\xF3\xA5")
+            )
 
             if instruction_index < 30:
                 print(
                     f"[copy-trace] "
                     f"{instruction_index:04d} "
                     f"0x{rip:X}: "
-                    f"{instruction.mnemonic} "
-                    f"{instruction.operands}"
+                    f"{mnemonic} {operands} "
+                    f"bytes={raw_bytes.hex()}"
                 )
 
-            elif instruction_index % 100 == 0:
-                print(
-                    f"[copy-trace] "
-                    f"Stepped {instruction_index} instructions; "
-                    f"RIP=0x{rip:X}"
-                )
-
-            mnemonic = instruction.mnemonic.lower()
-            operands = instruction.operands.lower()
-
-            is_movsq = (
-                "movsq" in mnemonic
-                or "movsq" in operands
-            )
-
-            is_repeat = (
-                "rep" in mnemonic
-                or b"\xF3" in instruction.raw_bytes[:2]
-            )
-
-            if not (is_movsq and is_repeat):
+            if not is_rep_movsq:
                 self.debugger.command("p")
                 continue
 
+            print(
+                f"\n[copy] REP MOVSQ detected at 0x{rip:X}"
+            )
+
             registers = self.debugger.get_registers(
-                "rsi", "rdi", "rcx"
+                "rsi",
+                "rdi",
+                "rcx",
             )
 
             source_va = registers["rsi"]
@@ -635,27 +656,42 @@ class RuntimeDecryptor:
             copy_size = registers["rcx"] * 8
 
             print(
-                "\n[copy] REP MOVSQ candidate detected:\n"
+                "\n[copy] Candidate details:\n"
                 f"  Instruction:  0x{rip:X}\n"
-                f"  RSI:          0x{source_va:X}\n"
-                f"  RDI:          0x{destination_va:X}\n"
+                f"  Source:       0x{source_va:X}\n"
+                f"  Destination:  0x{destination_va:X}\n"
                 f"  RCX:          0x{registers['rcx']:X}\n"
                 f"  Copy size:    0x{copy_size:X}\n"
                 f"  Alloc base:   0x{allocation.base:X}\n"
                 f"  Alloc size:   0x{allocation.size:X}"
             )
 
-            if (
-                destination_va != allocation.base
-                or copy_size != allocation.size
-            ):
+            if destination_va != allocation.base:
+                print(
+                    "[copy] Candidate rejected: "
+                    "destination does not match allocation."
+                )
+
                 self.debugger.command("p")
                 continue
 
-            print(f"[copy] Instruction: 0x{rip:X}")
-            print(f"[copy] Source:      0x{source_va:X}")
-            print(f"[copy] Destination: 0x{destination_va:X}")
-            print(f"[copy] Size:        0x{copy_size:X}")
+            if copy_size != allocation.size:
+                print(
+                    "[copy] Candidate rejected: "
+                    "copy size does not match allocation."
+                )
+
+                self.debugger.command("p")
+                continue
+
+            if source_va == 0 or destination_va == 0:
+                raise RuntimeDecryptError(
+                    "REP MOVSQ has an invalid source or destination."
+                )
+
+            print(
+                "\n[copy] Matching REP MOVSQ confirmed."
+            )
 
             self._complete_bulk_copy(
                 instruction_va=rip,
@@ -672,7 +708,8 @@ class RuntimeDecryptor:
             )
 
         raise RuntimeDecryptError(
-            "Matching REP MOVSQ not found"
+            "Matching REP MOVSQ not found within "
+            f"{self.max_copy_instructions} instructions."
         )
 
     def _complete_bulk_copy(
