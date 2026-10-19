@@ -269,11 +269,7 @@ class RuntimeDecryptor:
 
             print("\n[test] Installing GetProcAddress breakpoint")
 
-            print(
-                self.debugger.command(
-                    "bu kernel32!GetProcAddress"
-                )
-            )
+            print(self.debugger.command("bu KERNELBASE!GetProcAddress"))
 
             print("\n[test] Current breakpoints:")
 
