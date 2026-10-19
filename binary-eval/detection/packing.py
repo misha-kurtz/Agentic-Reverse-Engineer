@@ -279,81 +279,81 @@ def detect_packing(
                     f"recovered: {capa_rule_count}"
                 )
 
-        # --------------------------------------------------
-        # Ghidra analysis
-        #
-        # These metrics should be generated separately from
-        # the Ghidra artifact directory and passed here.
-        # --------------------------------------------------
+    # --------------------------------------------------
+    # Ghidra analysis
+    #
+    # These metrics should be generated separately from
+    # the Ghidra artifact directory and passed here.
+    # --------------------------------------------------
 
-        if ghidra_metrics is not None:
+    if ghidra_metrics is not None:
 
-            function_count = ghidra_metrics.get(
-                "function_count",
+        function_count = ghidra_metrics.get(
+            "function_count",
+            0,
+        )
+
+        decompiled_function_count = (
+            ghidra_metrics.get(
+                "decompiled_function_count",
                 0,
             )
+        )
 
-            decompiled_function_count = (
-                ghidra_metrics.get(
-                    "decompiled_function_count",
-                    0,
-                )
+        decompilation_failure_count = (
+            ghidra_metrics.get(
+                "decompilation_failure_count",
+                0,
+            )
+        )
+
+        callgraph_edge_count = (
+            ghidra_metrics.get(
+                "callgraph_edge_count",
+                0,
+            )
+        )
+
+        # Extremely small recovered function set
+        if function_count <= 5:
+            score += 0.05
+
+            indicators.append(
+                f"Very few Ghidra functions recovered: "
+                f"{function_count}"
             )
 
-            decompilation_failure_count = (
-                ghidra_metrics.get(
-                    "decompilation_failure_count",
-                    0,
-                )
+        # High decompilation failure ratio
+        total_decompilation_attempts = (
+            decompiled_function_count
+            + decompilation_failure_count
+        )
+
+        if total_decompilation_attempts > 0:
+            failure_ratio = (
+                decompilation_failure_count
+                / total_decompilation_attempts
             )
 
-            callgraph_edge_count = (
-                ghidra_metrics.get(
-                    "callgraph_edge_count",
-                    0,
-                )
-            )
-
-            # Extremely small recovered function set
-            if function_count <= 5:
-                score += 0.05
+            if failure_ratio >= 0.50:
+                score += 0.10
 
                 indicators.append(
-                    f"Very few Ghidra functions recovered: "
-                    f"{function_count}"
+                    "High Ghidra decompilation failure "
+                    f"ratio: {failure_ratio:.2f}"
                 )
 
-            # High decompilation failure ratio
-            total_decompilation_attempts = (
-                decompiled_function_count
-                + decompilation_failure_count
+        # Very sparse call graph
+        if (
+            function_count >= 5
+            and callgraph_edge_count == 0
+        ):
+            score += 0.05
+
+            indicators.append(
+                "Ghidra recovered functions but "
+                "no call graph edges"
             )
-
-            if total_decompilation_attempts > 0:
-                failure_ratio = (
-                    decompilation_failure_count
-                    / total_decompilation_attempts
-                )
-
-                if failure_ratio >= 0.50:
-                    score += 0.10
-
-                    indicators.append(
-                        "High Ghidra decompilation failure "
-                        f"ratio: {failure_ratio:.2f}"
-                    )
-
-            # Very sparse call graph
-            if (
-                function_count >= 5
-                and callgraph_edge_count == 0
-            ):
-                score += 0.05
-
-                indicators.append(
-                    "Ghidra recovered functions but "
-                    "no call graph edges"
-                )
 
     # --------------------------------------------------
     # Final assessment
