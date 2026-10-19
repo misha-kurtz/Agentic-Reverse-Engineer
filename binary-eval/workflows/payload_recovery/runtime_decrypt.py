@@ -1,3 +1,16 @@
+# binary-eval/workflows/payload_recovery/runtime_decrypt.py
+from __future__ import annotations
+import re
+import struct
+
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pefile
+
+from runners.debugger import CdbDebugger, ModuleInfo
+
 '''
 Hyperion Runtime Decryption Workflow
 
@@ -60,21 +73,6 @@ Install hardware execution breakpoint
         v
 Confirm execution reaches OEP
 '''
-
-# binary-eval/workflows/payload_recovery/runtime_decrypt.py
-from __future__ import annotations
-
-import re
-import struct
-
-from dataclasses import dataclass
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import pefile
-
-from runners.debugger import CdbDebugger, ModuleInfo
-
 
 class RuntimeDecryptError(RuntimeError):
     pass
