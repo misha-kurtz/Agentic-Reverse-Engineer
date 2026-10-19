@@ -1174,6 +1174,11 @@ class RuntimeDecryptor:
 
             data = path.read_bytes()
 
+            print(
+                f"[pe-debug] Source VA: 0x{source_va:X} "
+                f"Header bytes: {data[:64].hex(' ')}"
+            )
+
         # --------------------------------------------------
         # Detect candidate DOS headers
         # --------------------------------------------------
