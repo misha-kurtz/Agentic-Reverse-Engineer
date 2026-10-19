@@ -221,6 +221,21 @@ class RuntimeDecryptor:
     # ----------------------------------------------------------
 
     def run(self, executable: Path | str) -> DecryptResult:
+        '''
+        Execute the Hyperion runtime recovery workflow.
+
+        Workflow:
+
+            1. Launch the encrypted executable.
+            2. Stop at the encrypted entry point.
+            3. Observe loader bootstrap and VirtualAlloc.
+            4. Identify the ciphertext REP MOVSQ operation.
+            5. Stop immediately after REP MOVSQ completes.
+            6. Monitor the temporary allocation for clearing.
+            7. Monitor reconstruction of the original PE.
+            8. Identify and validate the recovered OEP.
+        '''
+
         executable = Path(executable)
 
         if not executable.exists():
@@ -231,6 +246,7 @@ class RuntimeDecryptor:
         pe = pefile.PE(str(executable))
 
         try:
+
             if pe.OPTIONAL_HEADER.Magic != 0x20B:
                 raise RuntimeDecryptError(
                     "Expected PE32+ executable"
@@ -241,11 +257,13 @@ class RuntimeDecryptor:
             )
 
         finally:
+
             pe.close()
 
         self.debugger.launch(executable)
 
         try:
+
             module = self.debugger.get_module(executable.name)
 
             image_base = module.base
@@ -253,17 +271,30 @@ class RuntimeDecryptor:
 
             pid = self.debugger.get_process_id()
 
-            print(f"[hyperion] Image base: 0x{image_base:X}")
-            print(f"[hyperion] Entry VA:   0x{entry_va:X}")
+            print(
+                f"[hyperion] Image base: 0x{image_base:X}"
+            )
 
-            # Stop at the encrypted entry point.
+            print(
+                f"[hyperion] Entry VA: 0x{entry_va:X}"
+            )
+
+            # --------------------------------------------------
+            # Stage 1: Stop at encrypted entry point
+            # --------------------------------------------------
+
             self.debugger.set_breakpoint(entry_va)
+
             self.debugger.continue_execution()
 
             self._require_rip(entry_va)
+
             self.debugger.clear_all_breakpoints()
 
-            # Observe loader bootstrap and allocation.
+            # --------------------------------------------------
+            # Stage 2: Observe loader bootstrap
+            # --------------------------------------------------
+
             bootstrap_events, allocation = (
                 self._observe_loader_bootstrap(
                     image_base=image_base,
@@ -271,10 +302,49 @@ class RuntimeDecryptor:
                 )
             )
 
-            # Identify and complete the encrypted-data copy.
+            # --------------------------------------------------
+            # Stage 3: Identify and complete REP MOVSQ
+            # --------------------------------------------------
+
             copy = self._observe_bulk_copy(allocation)
 
-            # Monitor decryption and reconstruction together.
+            print(
+                "\n[hyperion] Initial ciphertext copy completed."
+            )
+
+            print(
+                f"[hyperion] Source: "
+                f"0x{copy.source_va:X}"
+            )
+
+            print(
+                f"[hyperion] Temporary allocation: "
+                f"0x{allocation.base:X}"
+            )
+
+            # --------------------------------------------------
+            # Stage 4: Wait for temporary allocation clearing
+            # --------------------------------------------------
+
+            print(
+                "\n[hyperion] Monitoring temporary allocation "
+                "for post-copy modifications."
+            )
+
+            self._wait_for_allocation_clear(
+                allocation=allocation,
+                copy=copy,
+            )
+
+            print(
+                "\n[hyperion] Temporary allocation transition "
+                "detected."
+            )
+
+            # --------------------------------------------------
+            # Stage 5: Monitor recovered PE reconstruction
+            # --------------------------------------------------
+
             recovered, protection_events = (
                 self._observe_decryption_and_reconstruction(
                     allocation=allocation,
@@ -284,7 +354,34 @@ class RuntimeDecryptor:
                 )
             )
 
+            # --------------------------------------------------
+            # Stage 6: Calculate recovered OEP
+            # --------------------------------------------------
+
             oep_va = image_base + recovered.oep_rva
+
+            print(
+                "\n[hyperion] Recovered PE identified."
+            )
+
+            print(
+                f"[hyperion] Recovered PE VA: "
+                f"0x{recovered.buffer_va:X}"
+            )
+
+            print(
+                f"[hyperion] OEP RVA: "
+                f"0x{recovered.oep_rva:X}"
+            )
+
+            print(
+                f"[hyperion] OEP VA: "
+                f"0x{oep_va:X}"
+            )
+
+            # --------------------------------------------------
+            # Stage 7: Return recovery result
+            # --------------------------------------------------
 
             return DecryptResult(
                 input_path=executable,
@@ -307,7 +404,9 @@ class RuntimeDecryptor:
             )
 
         except Exception:
+
             self.debugger.close()
+
             raise
 
     # ----------------------------------------------------------
@@ -773,6 +872,247 @@ class RuntimeDecryptor:
         self.debugger.clear_all_breakpoints()
 
         print("[copy] Bulk copy completed")
+
+    def _wait_for_allocation_clear(
+        self,
+        allocation: AllocationInfo,
+        copy: CopyInfo,
+    ) -> None:
+        '''
+        Wait for a write to the temporary allocation after the
+        initial REP MOVSQ ciphertext copy has completed.
+
+        Reproduce the manual x64dbg workflow:
+
+            1. Stop at the instruction after REP MOVSQ.
+            2. Confirm the allocation contains copied ciphertext.
+            3. Install a write breakpoint on the allocation.
+            4. Continue execution.
+            5. Detect when the monitored bytes become zero.
+            6. Return so PE reconstruction monitoring can begin.
+
+        The breakpoint monitors the first eight bytes of the
+        allocation, not the entire allocation.
+        '''
+
+        if allocation.base == 0:
+            raise RuntimeDecryptError(
+                "Cannot monitor an invalid allocation address."
+            )
+
+        if allocation.size < 8:
+            raise RuntimeDecryptError(
+                "Allocation is too small for an eight-byte watchpoint."
+            )
+
+        if copy.destination_va != allocation.base:
+            raise RuntimeDecryptError(
+                "Copy destination does not match the allocation base."
+            )
+
+        watch_va = allocation.base
+
+        sample_size = min(allocation.size, 64)
+
+        def read_allocation_sample() -> bytes:
+            '''
+            Read the beginning of the temporary allocation.
+            '''
+
+            with TemporaryDirectory() as directory:
+
+                path = Path(directory) / "allocation_sample.bin"
+
+                self.debugger.write_memory(
+                    output_path=path,
+                    start_va=allocation.base,
+                    end_va=allocation.base + sample_size,
+                )
+
+                data = path.read_bytes()
+
+            if len(data) != sample_size:
+                raise RuntimeDecryptError(
+                    "Failed to read the expected allocation sample. "
+                    f"Expected {sample_size} bytes, got {len(data)}."
+                )
+
+            recovered = self._parse_recovered_pe(
+                copy.source_va,
+                copy.size,
+            )
+
+            if recovered is not None:
+
+                print(
+                    "[allocation-monitor] Recovered PE detected "
+                    "immediately after allocation clearing."
+                )
+
+                print(
+                    f"[allocation-monitor] PE VA: "
+                    f"0x{recovered.buffer_va:X}"
+                )
+
+                print(
+                    f"[allocation-monitor] OEP RVA: "
+                    f"0x{recovered.oep_rva:X}"
+                )
+
+            else:
+
+                print(
+                    "[allocation-monitor] Allocation cleared, "
+                    "but a valid recovered PE was not detected yet."
+                )
+
+            return data
+
+        # --------------------------------------------------
+        # Step 1: Capture allocation contents after REP MOVSQ
+        # --------------------------------------------------
+
+        print(
+            "\n[allocation-monitor] Initial ciphertext copy completed."
+        )
+
+        print(
+            f"[allocation-monitor] Allocation base: "
+            f"0x{allocation.base:X}"
+        )
+
+        print(
+            f"[allocation-monitor] Allocation size: "
+            f"0x{allocation.size:X}"
+        )
+
+        initial_sample = read_allocation_sample()
+
+        print(
+            "[allocation-monitor] Initial allocation bytes:\n"
+            f"  {initial_sample.hex(' ')}"
+        )
+
+        if not any(initial_sample):
+            raise RuntimeDecryptError(
+                "Temporary allocation is already zero at the "
+                "post-REP MOVSQ checkpoint."
+            )
+
+        # --------------------------------------------------
+        # Step 2: Install write breakpoint
+        # --------------------------------------------------
+
+        self.debugger.clear_all_breakpoints()
+
+        breakpoint_output = self.debugger.command(
+            f"ba w8 0x{watch_va:X}"
+        )
+
+        if (
+            "error" in breakpoint_output.lower()
+            or "couldn't" in breakpoint_output.lower()
+        ):
+            raise RuntimeDecryptError(
+                "Failed to install allocation write breakpoint:\n"
+                f"{breakpoint_output}"
+            )
+
+        print(
+            "[allocation-monitor] Write breakpoint installed:\n"
+            f"  Address: 0x{watch_va:X}\n"
+            "  Size:    8 bytes"
+        )
+
+        # --------------------------------------------------
+        # Step 3: Wait for the allocation to change
+        # --------------------------------------------------
+
+        previous_sample = initial_sample
+
+        try:
+
+            for event_number in range(self.max_monitor_events):
+
+                self.debugger.continue_execution()
+
+                rip = self.debugger.get_register("rip")
+
+                current_sample = read_allocation_sample()
+
+                if current_sample != previous_sample:
+
+                    changed_offsets = [
+                        index
+                        for index, (old, new) in enumerate(
+                            zip(previous_sample, current_sample)
+                        )
+                        if old != new
+                    ]
+
+                    print(
+                        "\n[allocation-monitor] Allocation modified."
+                    )
+
+                    print(
+                        f"[allocation-monitor] Event: "
+                        f"{event_number + 1}"
+                    )
+
+                    print(
+                        f"[allocation-monitor] RIP: 0x{rip:X}"
+                    )
+
+                    print(
+                        "[allocation-monitor] Changed offsets: "
+                        + ", ".join(
+                            f"0x{offset:X}"
+                            for offset in changed_offsets
+                        )
+                    )
+
+                    print(
+                        "[allocation-monitor] Current bytes:\n"
+                        f"  {current_sample.hex(' ')}"
+                    )
+
+                # --------------------------------------------------
+                # Step 4: Detect the zeroed allocation
+                # --------------------------------------------------
+
+                if not any(current_sample):
+
+                    print(
+                        "\n[allocation-monitor] Allocation sample "
+                        "is now zero."
+                    )
+
+                    print(
+                        f"[allocation-monitor] Event: "
+                        f"{event_number + 1}"
+                    )
+
+                    print(
+                        f"[allocation-monitor] RIP: 0x{rip:X}"
+                    )
+
+                    print(
+                        "[allocation-monitor] Temporary allocation "
+                        "transition detected."
+                    )
+
+                    return
+
+                previous_sample = current_sample
+
+            raise RuntimeDecryptError(
+                "Temporary allocation did not become zero within "
+                f"{self.max_monitor_events} write-breakpoint events."
+            )
+
+        finally:
+
+            self.debugger.clear_all_breakpoints()
 
     # ----------------------------------------------------------
     # Combined decryption and reconstruction monitoring
