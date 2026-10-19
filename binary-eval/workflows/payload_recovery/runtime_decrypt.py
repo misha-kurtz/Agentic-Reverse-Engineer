@@ -187,8 +187,6 @@ class RuntimeDecryptor:
         "LoadLibraryA",
         "GetProcAddress",
         "VirtualAlloc",
-        "VirtualProtect",
-        "MapViewOfFile",
     )
 
     EVENT_MARKERS = {
@@ -452,7 +450,7 @@ class RuntimeDecryptor:
             events.append(
                 BootstrapEvent(
                     api=api,
-                    address=rip,
+                    rip=rip,
                 )
             )
 
