@@ -937,34 +937,6 @@ class RuntimeDecryptor:
                     f"Expected {sample_size} bytes, got {len(data)}."
                 )
 
-            recovered = self._parse_recovered_pe(
-                copy.source_va,
-                copy.size,
-            )
-
-            if recovered is not None:
-
-                print(
-                    "[allocation-monitor] Recovered PE detected "
-                    "immediately after allocation clearing."
-                )
-
-                print(
-                    f"[allocation-monitor] PE VA: "
-                    f"0x{recovered.buffer_va:X}"
-                )
-
-                print(
-                    f"[allocation-monitor] OEP RVA: "
-                    f"0x{recovered.oep_rva:X}"
-                )
-
-            else:
-
-                print(
-                    "[allocation-monitor] Allocation cleared, "
-                    "but a valid recovered PE was not detected yet."
-                )
 
             return data
 
@@ -1100,6 +1072,35 @@ class RuntimeDecryptor:
                         "[allocation-monitor] Temporary allocation "
                         "transition detected."
                     )
+
+                    recovered = self._parse_recovered_pe(
+                                    copy.source_va,
+                                    copy.size,
+                                )
+                    
+                    if recovered is not None:
+        
+                        print(
+                            "[allocation-monitor] Recovered PE detected "
+                            "immediately after allocation clearing."
+                        )
+        
+                        print(
+                            f"[allocation-monitor] PE VA: "
+                            f"0x{recovered.buffer_va:X}"
+                        )
+        
+                        print(
+                            f"[allocation-monitor] OEP RVA: "
+                            f"0x{recovered.oep_rva:X}"
+                        )
+        
+                    else:
+        
+                        print(
+                            "[allocation-monitor] Allocation cleared, "
+                            "but a valid recovered PE was not detected yet."
+                        )
 
                     return
 
