@@ -204,7 +204,7 @@ class RuntimeDecryptor:
         debugger: CdbDebugger,
         max_bootstrap_events: int = 256,
         max_copy_instructions=4096,
-        max_monitor_events: int = 2048,
+        max_monitor_events: int=10000,
         max_header_offset: int = 0x40,
     ):
         self.debugger = debugger
