@@ -214,6 +214,8 @@ class RuntimeDecryptor:
         self.max_monitor_events = max_monitor_events
         self.max_header_offset = max_header_offset
 
+        self._previous_header_bytes = None
+
     # ----------------------------------------------------------
     # Public workflow
     # ----------------------------------------------------------
@@ -1174,11 +1176,49 @@ class RuntimeDecryptor:
 
             data = path.read_bytes()
 
-            print(
-                f"[pe-debug] Source VA: 0x{source_va:X} "
-                f"Header bytes: {data[:64].hex(' ')}"
-            )
+            # Capture the first 64 bytes of the source region.
+            current_header_bytes = data[:64]
 
+            # Only print when the bytes differ from the previous snapshot.
+            if current_header_bytes != self._previous_header_bytes:
+
+                if self._previous_header_bytes is None:
+                    print("[pe-debug] Initial header snapshot")
+
+                else:
+                    print("[pe-debug] Header bytes changed")
+
+                    # Identify which byte offsets changed.
+                    changed_offsets = [
+                        index
+                        for index, (old, new) in enumerate(
+                            zip(
+                                self._previous_header_bytes,
+                                current_header_bytes,
+                            )
+                        )
+                        if old != new
+                    ]
+
+                    print(
+                        "[pe-debug] Changed offsets: "
+                        + ", ".join(
+                            f"0x{offset:X}"
+                            for offset in changed_offsets
+                        )
+                    )
+
+                print(
+                    f"[pe-debug] Source VA: 0x{source_va:X}"
+                )
+
+                print(
+                    "[pe-debug] Header bytes: "
+                    f"{current_header_bytes.hex(' ')}"
+                )
+
+                # Save this snapshot for the next comparison.
+                self._previous_header_bytes = current_header_bytes
         # --------------------------------------------------
         # Detect candidate DOS headers
         # --------------------------------------------------
