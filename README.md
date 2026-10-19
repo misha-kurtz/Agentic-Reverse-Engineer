@@ -1,5 +1,5 @@
 
-### Agentic Multimodal RAG Framework for Robust Reverse Engineering of Packed & Encrypted Malware
+### Agentic Multimodal RAG for Robust Reverse Engineering of Packed & Encrypted Malware
 
 ``` console
 REMnux VM control                          ✓
