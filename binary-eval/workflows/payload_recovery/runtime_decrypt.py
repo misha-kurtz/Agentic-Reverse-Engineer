@@ -203,7 +203,7 @@ class RuntimeDecryptor:
         self,
         debugger: CdbDebugger,
         max_bootstrap_events: int = 256,
-        max_copy_instructions: int = 512,
+        max_copy_instructions=4096,
         max_monitor_events: int = 2048,
         max_header_offset: int = 0x40,
     ):
@@ -519,8 +519,26 @@ class RuntimeDecryptor:
                 "Waiting for VirtualAlloc return."
             )
 
-            # Execute until the current function returns.
             self.debugger.command("gu", timeout=120.0)
+
+            return_rip = self.debugger.get_register("rip")
+
+            print(
+                f"[allocation] Expected return RIP: "
+                f"0x{return_address:X}"
+            )
+
+            print(
+                f"[allocation] Actual return RIP:   "
+                f"0x{return_rip:X}"
+            )
+
+            if return_rip != return_address:
+                raise RuntimeDecryptError(
+                    "VirtualAlloc did not return to the expected caller. "
+                    f"Expected 0x{return_address:X}, "
+                    f"got 0x{return_rip:X}"
+                )
 
             allocated_base = self.debugger.get_register("rax")
 
@@ -570,12 +588,26 @@ class RuntimeDecryptor:
         the copy with the observed allocation.
         '''
 
-        for _ in range(self.max_copy_instructions):
+        for instruction_index in range(self.max_copy_instructions):
             rip = self.debugger.get_register("rip")
 
-            instruction = self.debugger.disassemble_one(
-                rip
-            )
+            instruction = self.debugger.disassemble_one(rip)
+
+            if instruction_index < 30:
+                print(
+                    f"[copy-trace] "
+                    f"{instruction_index:04d} "
+                    f"0x{rip:X}: "
+                    f"{instruction.mnemonic} "
+                    f"{instruction.operands}"
+                )
+
+            elif instruction_index % 100 == 0:
+                print(
+                    f"[copy-trace] "
+                    f"Stepped {instruction_index} instructions; "
+                    f"RIP=0x{rip:X}"
+                )
 
             mnemonic = instruction.mnemonic.lower()
             operands = instruction.operands.lower()
@@ -601,6 +633,17 @@ class RuntimeDecryptor:
             source_va = registers["rsi"]
             destination_va = registers["rdi"]
             copy_size = registers["rcx"] * 8
+
+            print(
+                "\n[copy] REP MOVSQ candidate detected:\n"
+                f"  Instruction:  0x{rip:X}\n"
+                f"  RSI:          0x{source_va:X}\n"
+                f"  RDI:          0x{destination_va:X}\n"
+                f"  RCX:          0x{registers['rcx']:X}\n"
+                f"  Copy size:    0x{copy_size:X}\n"
+                f"  Alloc base:   0x{allocation.base:X}\n"
+                f"  Alloc size:   0x{allocation.size:X}"
+            )
 
             if (
                 destination_va != allocation.base
