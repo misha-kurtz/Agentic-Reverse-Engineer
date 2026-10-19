@@ -276,7 +276,10 @@ class RuntimeDecryptor:
             # ----------------------------------------------------------
 
             bootstrap_events, allocation = (
-                self._observe_loader_bootstrap()
+                self._observe_loader_bootstrap(
+                    image_base=image_base,
+                    image_end=module.end,
+                )
             )
 
             # Identify and complete the encrypted-data copy.
@@ -408,69 +411,71 @@ class RuntimeDecryptor:
 
     def _observe_loader_bootstrap(
         self,
+        image_base: int,
+        image_end: int,
     ) -> tuple[tuple[BootstrapEvent, ...], AllocationInfo]:
         '''
-        Observe Hyperion's API-resolution phase.
+        Observe the loader's API calls and identify a candidate
+        VirtualAlloc allocation associated with payload recovery.
 
-        Accept a VirtualAlloc candidate only after observing
-        LoadLibraryA and GetProcAddress activity.
+        Unlike the previous implementation, allocation inspection
+        does not depend on observing LoadLibraryA or GetProcAddress
+        first.
 
-        This is a loader-state heuristic rather than proof
-        that every bootstrap operation has completed.
+        Candidate allocations are evaluated using:
+        - requested allocation size
+        - allocation type
+        - initial protection
+        - return address
+        - whether the caller belongs to the executable image
         '''
+
+        self.debugger.clear_all_breakpoints()
 
         for api in self.BOOTSTRAP_APIS:
             self._set_api_breakpoint(api)
 
         print("\n[bootstrap] Installed CDB breakpoints:")
+        print(self.debugger.command("bl"))
 
-        print(
-            self.debugger.command("bl")
-        )
+        events: list[BootstrapEvent] = []
 
-        events = []
+        for event_index in range(self.max_bootstrap_events):
 
-        load_library_seen = False
-        get_proc_address_seen = False
-
-        for _ in range(self.max_bootstrap_events):
             output = self.debugger.continue_execution()
 
             api = self._classify_event(output)
 
             if api is None:
+                print("[bootstrap] Unclassified debugger stop:")
+                print(output)
+
                 raise RuntimeDecryptError(
-                    "Unclassified bootstrap debugger stop:\n"
-                    + output[-1500:]
+                    "Unable to classify bootstrap debugger stop."
                 )
 
             rip = self.debugger.get_register("rip")
 
-            events.append(
-                BootstrapEvent(api=api, rip=rip)
-            )
-
             print(f"[bootstrap] {api}: 0x{rip:X}")
 
-            if api == "LoadLibraryA":
-                load_library_seen = True
-                continue
-
-            if api == "GetProcAddress":
-                get_proc_address_seen = True
-                continue
+            # Keep the existing BootstrapEvent construction here
+            # if your dataclass uses additional fields.
+            events.append(
+                BootstrapEvent(
+                    api=api,
+                    address=rip,
+                )
+            )
 
             if api != "VirtualAlloc":
                 continue
 
-            if not (
-                load_library_seen
-                and get_proc_address_seen
-            ):
-                continue
-
             registers = self.debugger.get_registers(
-                "rcx", "rdx", "r8", "r9", "rsp"
+                "rcx",
+                "rdx",
+                "r8",
+                "r9",
+                "rsp",
             )
 
             requested_base = registers["rcx"]
@@ -478,60 +483,89 @@ class RuntimeDecryptor:
             allocation_type = registers["r8"]
             protection = registers["r9"]
 
-            candidate = (
-                requested_base == 0
-                and allocation_size > 0
-                and allocation_type & 0x3000 == 0x3000
-                and protection == 0x04
-            )
-
-            if not candidate:
-                print("[bootstrap] Ignoring allocation")
-                continue
-
             return_address = self.debugger.read_qword(
                 registers["rsp"]
             )
 
-            print("[allocation] Candidate identified")
-            print(f"[allocation] Size: 0x{allocation_size:X}")
-
-            # Avoid API breakpoint interruptions while
-            # returning from VirtualAlloc.
-            self.debugger.clear_all_breakpoints()
-
-            self.debugger.command(
-                "gu",
-                timeout=120.0,
+            caller_in_image = (
+                image_base <= return_address < image_end
             )
 
-            self._require_rip(return_address)
-
-            allocation_base = self.debugger.get_register(
-                "rax"
+            print(
+                "\n[allocation] VirtualAlloc candidate:\n"
+                f"  lpAddress:         0x{requested_base:X}\n"
+                f"  dwSize:            0x{allocation_size:X}\n"
+                f"  flAllocationType:  0x{allocation_type:X}\n"
+                f"  flProtect:         0x{protection:X}\n"
+                f"  Return address:    0x{return_address:X}\n"
+                f"  Caller in image:   {caller_in_image}"
             )
 
-            if allocation_base == 0:
-                raise RuntimeDecryptError(
-                    "VirtualAlloc returned NULL"
+            # Hyperion's observed allocation uses MEM_COMMIT |
+            # MEM_RESERVE and PAGE_READWRITE.
+            #
+            # These values are useful candidate filters, but they
+            # do not independently prove payload recovery.
+            matches_allocation_pattern = (
+                requested_base == 0
+                and allocation_size > 0
+                and (allocation_type & 0x3000) == 0x3000
+                and protection == 0x04
+            )
+
+            if not matches_allocation_pattern:
+                print(
+                    "[allocation] Candidate rejected: "
+                    "allocation arguments do not match."
                 )
+                continue
 
+            if not caller_in_image:
+                print(
+                    "[allocation] Candidate rejected: "
+                    "caller is outside the executable image."
+                )
+                continue
+
+            print(
+                "[allocation] Candidate matches. "
+                "Waiting for VirtualAlloc return."
+            )
+
+            # Execute until the current function returns.
+            self.debugger.command("gu", timeout=120.0)
+
+            allocated_base = self.debugger.get_register("rax")
+
+            print(
+                f"[allocation] VirtualAlloc returned: "
+                f"0x{allocated_base:X}"
+            )
+
+            if allocated_base == 0:
+                print(
+                    "[allocation] Candidate rejected: "
+                    "VirtualAlloc failed."
+                )
+                continue
+
+            # Construct AllocationInfo using the field names
+            # from your existing dataclass.
             allocation = AllocationInfo(
-                base=allocation_base,
+                base=allocated_base,
                 size=allocation_size,
                 allocation_type=allocation_type,
                 protection=protection,
                 return_address=return_address,
             )
 
-            print(
-                f"[allocation] Base: 0x{allocation_base:X}"
-            )
+            self.debugger.clear_all_breakpoints()
 
             return tuple(events), allocation
 
         raise RuntimeDecryptError(
-            "No suitable allocation observed"
+            "Bootstrap event limit reached without identifying "
+            "a suitable VirtualAlloc allocation."
         )
 
     # ----------------------------------------------------------
