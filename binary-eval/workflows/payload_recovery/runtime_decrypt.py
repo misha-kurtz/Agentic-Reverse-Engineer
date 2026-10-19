@@ -263,47 +263,13 @@ class RuntimeDecryptor:
             self._require_rip(entry_va)
             self.debugger.clear_all_breakpoints()
 
-            # ----------------------------------------------------------
-            # TEMPORARY CDB BREAKPOINT DIAGNOSTIC
-            # ----------------------------------------------------------
-
-            print("\n[test] Installing GetProcAddress breakpoint")
-
-            print(self.debugger.command("bu KERNELBASE!GetProcAddress"))
-
-            print("\n[test] Current breakpoints:")
-
-            print(
-                self.debugger.command("bl")
+            # Observe loader bootstrap and allocation.
+            bootstrap_events, allocation = (
+                self._observe_loader_bootstrap()
             )
 
-            print("\n[test] Resolving GetProcAddress:")
-
-            print(
-                self.debugger.command("x kernel32!GetProcAddress")
-            )
-
-            print(
-                self.debugger.command("x KERNELBASE!GetProcAddress")
-            )
-
-            print("\n[test] Continuing to GetProcAddress")
-
-            output = self.debugger.continue_execution(
-                timeout=30.0
-            )
-
-            print("\n[test] Debugger output:")
-            print(output)
-
-            print(
-                f"\n[test] RIP: "
-                f"0x{self.debugger.get_register('rip'):X}"
-            )
-
-            # Stop the test here.
-            # Do not proceed into the normal bootstrap workflow.
-            return
+            # Identify and complete the encrypted-data copy.
+            copy = self._observe_bulk_copy(allocation)
 
             # ----------------------------------------------------------
             # NORMAL WORKFLOW (temporarily unreachable)
@@ -359,13 +325,31 @@ class RuntimeDecryptor:
 
     def _set_api_breakpoint(self, api: str) -> None:
         '''
-        Install a standard unresolved-symbol breakpoint.
+        Install a CDB API breakpoint using a resolvable
+        Windows API implementation.
 
-        Diagnostic version: no breakpoint command string.
+        Verify that the breakpoint command succeeds.
         '''
 
-        self.debugger.command(
-            f"bu kernel32!{api}"
+        marker = self.EVENT_MARKERS[api]
+
+        command = (
+            f'bu KERNELBASE!{api} ".echo {marker}"'
+        )
+
+        output = self.debugger.command(command)
+
+        if (
+            "Couldn't resolve" in output
+            or "error" in output.lower()
+        ):
+            raise RuntimeDecryptError(
+                f"Failed to install breakpoint for {api}:\n"
+                f"{output}"
+            )
+
+        print(
+            f"[breakpoint] Installed KERNELBASE!{api}"
         )
 
     def _set_source_breakpoint(self, source_va: int) -> None:
@@ -438,24 +422,10 @@ class RuntimeDecryptor:
         for api in self.BOOTSTRAP_APIS:
             self._set_api_breakpoint(api)
 
-        print("\n[bootstrap] Installed breakpoints:")
-
-        breakpoint_output = self.debugger.command("bl")
-
-        print(breakpoint_output)
-
-        print("\n[bootstrap] Resolving VirtualAlloc:")
+        print("\n[bootstrap] Installed CDB breakpoints:")
 
         print(
-            self.debugger.command(
-                "x kernel32!VirtualAlloc"
-            )
-        )
-
-        print(
-            self.debugger.command(
-                "x KERNELBASE!VirtualAlloc"
-            )
+            self.debugger.command("bl")
         )
 
         events = []
