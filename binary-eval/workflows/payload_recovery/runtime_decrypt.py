@@ -797,6 +797,10 @@ class RuntimeDecryptor:
         VirtualProtect events provide reconstruction
         synchronization points.
 
+        Track whether VirtualProtect modifies the recovered
+        OEP region and whether the requested protection
+        permits execution.
+
         The final mapped image is checked at the OEP.
         '''
 
@@ -812,7 +816,19 @@ class RuntimeDecryptor:
 
         oep_va = None
 
+        executable_protections = {
+            0x10,  # PAGE_EXECUTE
+            0x20,  # PAGE_EXECUTE_READ
+            0x40,  # PAGE_EXECUTE_READWRITE
+            0x80,  # PAGE_EXECUTE_WRITECOPY
+        }
+
         def install_monitor_breakpoints() -> None:
+            '''
+            Install monitoring breakpoints based on the
+            current recovery state.
+            '''
+
             self.debugger.clear_all_breakpoints()
 
             self._set_api_breakpoint("VirtualProtect")
@@ -826,9 +842,17 @@ class RuntimeDecryptor:
         if recovered is not None:
             oep_va = image_base + recovered.oep_rva
 
+            if not (
+                image_base <= oep_va < image_end
+            ):
+                raise RuntimeDecryptError(
+                    "Candidate OEP outside main image"
+                )
+
         install_monitor_breakpoints()
 
         for event_number in range(self.max_monitor_events):
+
             output = self.debugger.continue_execution()
 
             event = self._classify_event(output)
@@ -843,7 +867,12 @@ class RuntimeDecryptor:
                 f"[monitor] Event {event_number + 1}: {event}"
             )
 
+            # --------------------------------------------------
+            # OEP execution confirmation
+            # --------------------------------------------------
+
             if event == "OEP":
+
                 if recovered is None or oep_va is None:
                     raise RuntimeDecryptError(
                         "OEP reached without recovered PE"
@@ -864,7 +893,12 @@ class RuntimeDecryptor:
 
                 return recovered, tuple(protection_events)
 
+            # --------------------------------------------------
+            # VirtualProtect monitoring
+            # --------------------------------------------------
+
             if event == "VirtualProtect":
+
                 request = self._capture_virtual_protect()
 
                 # Temporarily remove breakpoints so gu can
@@ -902,15 +936,20 @@ class RuntimeDecryptor:
                         f"protect=0x{completed.new_protection:X}"
                     )
 
-                # This API return is also a synchronization
-                # point for inspecting the ciphertext source.
+                # VirtualProtect returning is also a
+                # synchronization point for inspecting
+                # the ciphertext source.
                 if recovered is None:
+
                     recovered = self._parse_recovered_pe(
                         source_va,
                         source_size,
                     )
 
+                # Initialize the OEP once the recovered
+                # PE headers have passed validation.
                 if recovered is not None and oep_va is None:
+
                     oep_va = image_base + recovered.oep_rva
 
                     if not (
@@ -921,23 +960,92 @@ class RuntimeDecryptor:
                         )
 
                     print(
-                        f"[decrypt] PE: 0x{recovered.buffer_va:X}"
+                        f"[decrypt] PE: "
+                        f"0x{recovered.buffer_va:X}"
                     )
+
                     print(
-                        f"[decrypt] OEP RVA: 0x{recovered.oep_rva:X}"
+                        f"[decrypt] OEP RVA: "
+                        f"0x{recovered.oep_rva:X}"
                     )
+
+                    print(
+                        f"[decrypt] OEP VA: "
+                        f"0x{oep_va:X}"
+                    )
+
+                # Determine whether this completed
+                # VirtualProtect call affected the OEP.
+                if recovered is not None and oep_va is not None:
+
+                    oep_protection_changed = (
+                        completed.succeeded
+                        and completed.address <= oep_va
+                        < completed.address + completed.size
+                    )
+
+                    if oep_protection_changed:
+
+                        protection_base = (
+                            completed.new_protection & 0xFF
+                        )
+
+                        is_executable = (
+                            protection_base
+                            in executable_protections
+                        )
+
+                        print(
+                            "[protect] OEP region modified:\n"
+                            f"  OEP VA:         0x{oep_va:X}\n"
+                            f"  Region base:    "
+                            f"0x{completed.address:X}\n"
+                            f"  Region size:    "
+                            f"0x{completed.size:X}\n"
+                            f"  New protection: "
+                            f"0x{completed.new_protection:X}\n"
+                            f"  Executable:     {is_executable}"
+                        )
 
                 install_monitor_breakpoints()
                 continue
 
+            # --------------------------------------------------
+            # Ciphertext source write monitoring
+            # --------------------------------------------------
+
             if event == "SourceWrite":
+
+                # Report the first ten source-write events,
+                # then periodically report execution progress.
+                if (
+                    event_number < 10
+                    or event_number % 100 == 0
+                ):
+
+                    rip = self.debugger.get_register("rip")
+
+                    instruction = (
+                        self.debugger.disassemble_one(rip)
+                    )
+
+                    print(
+                        f"[source-write] "
+                        f"Event={event_number + 1} "
+                        f"RIP=0x{rip:X} "
+                        f"{instruction.mnemonic} "
+                        f"{instruction.operands}"
+                    )
+
                 if recovered is None:
+
                     recovered = self._parse_recovered_pe(
                         source_va,
                         source_size,
                     )
 
                 if recovered is not None and oep_va is None:
+
                     oep_va = image_base + recovered.oep_rva
 
                     if not (
@@ -957,6 +1065,13 @@ class RuntimeDecryptor:
                         f"0x{recovered.oep_rva:X}"
                     )
 
+                    print(
+                        f"[decrypt] OEP VA: "
+                        f"0x{oep_va:X}"
+                    )
+
+                    # Remove the source-write breakpoint
+                    # and install the OEP breakpoint.
                     install_monitor_breakpoints()
 
                 continue
@@ -1034,6 +1149,12 @@ class RuntimeDecryptor:
         ransomware sample places MZ at source + 0x4.
 
         This is not an unrestricted memory scan.
+
+        Validate the PE structure without requiring the OEP
+        section to be marked executable.
+
+        Runtime execution permissions are monitored separately
+        through VirtualProtect events.
         '''
 
         header_size = min(source_size, 0x2000)
@@ -1042,6 +1163,7 @@ class RuntimeDecryptor:
             return None
 
         with TemporaryDirectory() as directory:
+
             path = Path(directory) / "headers.bin"
 
             self.debugger.write_memory(
@@ -1052,6 +1174,40 @@ class RuntimeDecryptor:
 
             data = path.read_bytes()
 
+        # --------------------------------------------------
+        # Detect candidate DOS headers
+        # --------------------------------------------------
+
+        candidate_offsets = [
+            offset
+            for offset in range(
+                min(
+                    self.max_header_offset + 1,
+                    max(0, len(data) - 1),
+                )
+            )
+            if data[offset:offset + 2] == b"MZ"
+        ]
+
+        if candidate_offsets:
+
+            print(
+                "[pe-debug] MZ candidate(s): "
+                + ", ".join(
+                    f"0x{offset:X}"
+                    for offset in candidate_offsets
+                )
+            )
+
+            print(
+                "[pe-debug] First 64 bytes: "
+                f"{data[:64].hex(' ')}"
+            )
+
+        # --------------------------------------------------
+        # Locate a valid DOS/NT header
+        # --------------------------------------------------
+
         pe_offset = self._find_recovered_pe_offset(
             data
         )
@@ -1059,12 +1215,23 @@ class RuntimeDecryptor:
         if pe_offset is None:
             return None
 
+        print(
+            "[pe-debug] Valid DOS/NT header "
+            f"at offset 0x{pe_offset:X}"
+        )
+
         recovered_pe_va = source_va + pe_offset
 
         data = data[pe_offset:]
 
+        # --------------------------------------------------
+        # Parse DOS header
+        # --------------------------------------------------
+
         e_lfanew = struct.unpack_from(
-            "<I", data, 0x3C
+            "<I",
+            data,
+            0x3C,
         )[0]
 
         if e_lfanew + 0x18 > len(data):
@@ -1073,41 +1240,61 @@ class RuntimeDecryptor:
         if data[e_lfanew:e_lfanew + 4] != b"PE\x00\x00":
             return None
 
+        # --------------------------------------------------
+        # Parse NT headers
+        # --------------------------------------------------
+
         optional_offset = e_lfanew + 0x18
 
         if optional_offset + 0x40 > len(data):
             return None
 
         magic = struct.unpack_from(
-            "<H", data, optional_offset
+            "<H",
+            data,
+            optional_offset,
         )[0]
 
         if magic != 0x20B:
             return None
 
         number_of_sections = struct.unpack_from(
-            "<H", data, e_lfanew + 6
+            "<H",
+            data,
+            e_lfanew + 6,
         )[0]
 
         optional_size = struct.unpack_from(
-            "<H", data, e_lfanew + 20
+            "<H",
+            data,
+            e_lfanew + 20,
         )[0]
 
         oep_rva = struct.unpack_from(
-            "<I", data, optional_offset + 0x10
+            "<I",
+            data,
+            optional_offset + 0x10,
         )[0]
 
         preferred_base = struct.unpack_from(
-            "<Q", data, optional_offset + 0x18
+            "<Q",
+            data,
+            optional_offset + 0x18,
         )[0]
 
         image_size = struct.unpack_from(
-            "<I", data, optional_offset + 0x38
+            "<I",
+            data,
+            optional_offset + 0x38,
         )[0]
 
         section_table = (
             optional_offset + optional_size
         )
+
+        # --------------------------------------------------
+        # Validate PE metadata
+        # --------------------------------------------------
 
         if not (0 < number_of_sections <= 96):
             return None
@@ -1121,15 +1308,23 @@ class RuntimeDecryptor:
         ):
             return None
 
+        # --------------------------------------------------
+        # Parse section headers
+        # --------------------------------------------------
+
         sections = []
 
         for index in range(number_of_sections):
+
             offset = section_table + index * 40
 
             name = (
                 data[offset:offset + 8]
                 .rstrip(b"\x00")
-                .decode("ascii", errors="replace")
+                .decode(
+                    "ascii",
+                    errors="replace",
+                )
             )
 
             virtual_size, rva, raw_size, raw_offset = (
@@ -1166,18 +1361,38 @@ class RuntimeDecryptor:
                 )
             )
 
-        oep_valid = any(
-            section.executable
-            and section.rva <= oep_rva
-            < section.rva + max(
-                section.virtual_size,
-                section.raw_size,
-            )
-            for section in sections
+        # --------------------------------------------------
+        # Validate OEP section membership
+        # --------------------------------------------------
+
+        oep_section = next(
+            (
+                section
+                for section in sections
+                if section.rva <= oep_rva
+                < section.rva + max(
+                    section.virtual_size,
+                    section.raw_size,
+                )
+            ),
+            None,
         )
 
-        if not oep_valid:
+        if oep_section is None:
             return None
+
+        print(
+            f"[pe] OEP RVA: 0x{oep_rva:X}\n"
+            f"[pe] OEP section: {oep_section.name}\n"
+            f"[pe] Section characteristics: "
+            f"0x{oep_section.characteristics:X}\n"
+            f"[pe] Section marked executable: "
+            f"{oep_section.executable}"
+        )
+
+        # --------------------------------------------------
+        # Return recovered PE metadata
+        # --------------------------------------------------
 
         return RecoveredPE(
             buffer_va=recovered_pe_va,
