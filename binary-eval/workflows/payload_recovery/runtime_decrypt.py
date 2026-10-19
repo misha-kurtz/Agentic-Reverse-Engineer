@@ -263,7 +263,56 @@ class RuntimeDecryptor:
             self._require_rip(entry_va)
             self.debugger.clear_all_breakpoints()
 
-            # Observe loader bootstrap and allocation.
+            # ----------------------------------------------------------
+            # TEMPORARY CDB BREAKPOINT DIAGNOSTIC
+            # ----------------------------------------------------------
+
+            print("\n[test] Installing GetProcAddress breakpoint")
+
+            print(
+                self.debugger.command(
+                    "bu kernel32!GetProcAddress"
+                )
+            )
+
+            print("\n[test] Current breakpoints:")
+
+            print(
+                self.debugger.command("bl")
+            )
+
+            print("\n[test] Resolving GetProcAddress:")
+
+            print(
+                self.debugger.command("x kernel32!GetProcAddress")
+            )
+
+            print(
+                self.debugger.command("x KERNELBASE!GetProcAddress")
+            )
+
+            print("\n[test] Continuing to GetProcAddress")
+
+            output = self.debugger.continue_execution(
+                timeout=30.0
+            )
+
+            print("\n[test] Debugger output:")
+            print(output)
+
+            print(
+                f"\n[test] RIP: "
+                f"0x{self.debugger.get_register('rip'):X}"
+            )
+
+            # Stop the test here.
+            # Do not proceed into the normal bootstrap workflow.
+            return
+
+            # ----------------------------------------------------------
+            # NORMAL WORKFLOW (temporarily unreachable)
+            # ----------------------------------------------------------
+
             bootstrap_events, allocation = (
                 self._observe_loader_bootstrap()
             )
@@ -311,18 +360,16 @@ class RuntimeDecryptor:
     # Breakpoint management
     # ----------------------------------------------------------
 
+
     def _set_api_breakpoint(self, api: str) -> None:
         '''
-        Install a symbolic API breakpoint with an event marker.
+        Install a standard unresolved-symbol breakpoint.
 
-        CDB breakpoint commands emit the marker and stop,
-        provided no explicit continuation command is appended.
+        Diagnostic version: no breakpoint command string.
         '''
 
-        marker = self.EVENT_MARKERS[api]
-
         self.debugger.command(
-            f'bu kernel32!{api} ".echo {marker}"'
+            f"bu kernel32!{api}"
         )
 
     def _set_source_breakpoint(self, source_va: int) -> None:
@@ -394,6 +441,26 @@ class RuntimeDecryptor:
 
         for api in self.BOOTSTRAP_APIS:
             self._set_api_breakpoint(api)
+
+        print("\n[bootstrap] Installed breakpoints:")
+
+        breakpoint_output = self.debugger.command("bl")
+
+        print(breakpoint_output)
+
+        print("\n[bootstrap] Resolving VirtualAlloc:")
+
+        print(
+            self.debugger.command(
+                "x kernel32!VirtualAlloc"
+            )
+        )
+
+        print(
+            self.debugger.command(
+                "x KERNELBASE!VirtualAlloc"
+            )
+        )
 
         events = []
 
