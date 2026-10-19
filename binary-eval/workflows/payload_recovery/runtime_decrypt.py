@@ -265,17 +265,6 @@ class RuntimeDecryptor:
 
             # Observe loader bootstrap and allocation.
             bootstrap_events, allocation = (
-                self._observe_loader_bootstrap()
-            )
-
-            # Identify and complete the encrypted-data copy.
-            copy = self._observe_bulk_copy(allocation)
-
-            # ----------------------------------------------------------
-            # NORMAL WORKFLOW (temporarily unreachable)
-            # ----------------------------------------------------------
-
-            bootstrap_events, allocation = (
                 self._observe_loader_bootstrap(
                     image_base=image_base,
                     image_end=module.end,
