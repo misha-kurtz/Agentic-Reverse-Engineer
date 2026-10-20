@@ -113,10 +113,9 @@ class VirtualProtectOEPIntegrationTest:
 
         before = self.show_breakpoints()
 
-        #self.decryptor._set_oep_breakpoint(self.oep_va)
-
         command = f'ba e1 0x{self.oep_va:X} ".echo HYP_OEP"'
         print(f"[INFO] Installing hardware breakpoint: {command}")
+
         output = self.debugger.command(command)
         print(f"[INFO] CDB response:\n{output}")
 
@@ -124,12 +123,12 @@ class VirtualProtectOEPIntegrationTest:
         new_ids = set(after) - set(before)
 
         if len(new_ids) != 1:
-            raise AssertionError(f"Expected one new hardware breakpoint, found {new_ids}")
+            raise AssertionError(f"Expected one new hardware breakpoint, found {new_ids}.\n{output}")
 
         self.oep_id = new_ids.pop()
         self.assert_breakpoint_enabled(self.oep_id, True)
 
-        if " e 1 " not in after[self.oep_id]["line"]:
+        if not re.search(r"\be\s+1\b", after[self.oep_id]["line"]):
             raise AssertionError("New breakpoint does not appear to be a hardware execution breakpoint")
 
         print(f"[PASS] Hardware breakpoint ID={self.oep_id}")
@@ -256,8 +255,13 @@ class VirtualProtectOEPIntegrationTest:
             self.launch()
             self.install_virtualprotect()
             self.resolve_oep_target()
-            self.install_hardware_breakpoint()
+
+            # Advance beyond the initial process breakpoint.
             self.wait_for_virtualprotect()
+
+            # Hardware breakpoints can now be installed.
+            self.install_hardware_breakpoint()
+
             request = self.capture_virtualprotect()
             self.test_gu_return(request)
             self.reenable_virtualprotect()
@@ -268,7 +272,6 @@ class VirtualProtectOEPIntegrationTest:
             print("==========================================")
         finally:
             self.cleanup()
-
 
 def main() -> None:
     if not CDB_PATH.is_file():
