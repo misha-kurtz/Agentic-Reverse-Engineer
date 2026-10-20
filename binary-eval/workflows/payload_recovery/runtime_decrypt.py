@@ -203,10 +203,17 @@ class RuntimeDecryptor:
         self,
         debugger: CdbDebugger,
         max_bootstrap_events: int = 256,
-        max_copy_instructions=4096,
-        max_monitor_events: int=10000,
+        max_copy_instructions: int = 4096,
+        max_monitor_events: int = 10000,
         max_header_offset: int = 0x40,
     ):
+        '''
+        Initialize the Hyperion runtime decryptor.
+
+        Parameters:
+            debugger: An instance of CdbDebugger for controlling
+        '''
+
         self.debugger = debugger
 
         self.max_bootstrap_events = max_bootstrap_events
@@ -215,6 +222,8 @@ class RuntimeDecryptor:
         self.max_header_offset = max_header_offset
 
         self._previous_header_bytes = None
+
+        self._api_breakpoint_ids: dict[str, int] = {}
 
     # ----------------------------------------------------------
     # Public workflow
@@ -289,7 +298,7 @@ class RuntimeDecryptor:
 
             self._require_rip(entry_va)
 
-            self.debugger.clear_all_breakpoints()
+            self._clear_all_breakpoints()
 
             # --------------------------------------------------
             # Stage 2: Observe loader bootstrap
@@ -322,40 +331,22 @@ class RuntimeDecryptor:
                 f"0x{allocation.base:X}"
             )
 
-            # --------------------------------------------------
-            # Stage 4: Wait for temporary allocation clearing
+                        # --------------------------------------------------
+            # Stage 4: Discover successful decryption
             # --------------------------------------------------
 
             print(
-                "\n[hyperion] Monitoring temporary allocation "
-                "for post-copy modifications."
+                "\n[hyperion] Discovering loader "
+                "acceptance breakpoint."
             )
 
-            self._wait_for_allocation_clear(
+            recovered = self._await_recovered_pe_success(
                 allocation=allocation,
                 copy=copy,
             )
 
-            print(
-                "\n[hyperion] Temporary allocation transition "
-                "detected."
-            )
-
             # --------------------------------------------------
-            # Stage 5: Monitor recovered PE reconstruction
-            # --------------------------------------------------
-
-            recovered, protection_events = (
-                self._observe_decryption_and_reconstruction(
-                    allocation=allocation,
-                    copy=copy,
-                    image_base=image_base,
-                    image_end=module.end,
-                )
-            )
-
-            # --------------------------------------------------
-            # Stage 6: Calculate recovered OEP
+            # Stage 5: Calculate recovered OEP
             # --------------------------------------------------
 
             oep_va = image_base + recovered.oep_rva
@@ -375,12 +366,26 @@ class RuntimeDecryptor:
             )
 
             print(
-                f"[hyperion] OEP VA: "
+                f"[hyperion] Candidate runtime OEP: "
                 f"0x{oep_va:X}"
             )
 
             # --------------------------------------------------
-            # Stage 7: Return recovery result
+            # Stage 6: Monitor final image reconstruction
+            # --------------------------------------------------
+
+            recovered, protection_events = (
+                self._observe_decryption_and_reconstruction(
+                    allocation=allocation,
+                    copy=copy,
+                    image_base=image_base,
+                    image_end=module.end,
+                    recovered=recovered,
+                )
+            )
+
+            # --------------------------------------------------
+            # Stage 7: Return OEP synchronization result
             # --------------------------------------------------
 
             return DecryptResult(
@@ -414,13 +419,30 @@ class RuntimeDecryptor:
     # ----------------------------------------------------------
 
 
-    def _set_api_breakpoint(self, api: str) -> None:
+    def _set_api_breakpoint(
+        self,
+        api: str,
+    ) -> None:
         '''
-        Install a CDB API breakpoint using a resolvable
-        Windows API implementation.
+        Install a named CDB API breakpoint.
 
-        Verify that the breakpoint command succeeds.
+        Resolve the numeric breakpoint ID from the debugger's
+        breakpoint listing and store it in the API registry.
+
+        If an existing registered breakpoint is still present,
+        do not install a duplicate.
         '''
+
+        if api in self._api_breakpoint_ids:
+
+            breakpoint_id = self._api_breakpoint_ids[api]
+
+            print(
+                f"[breakpoint] {api} already registered "
+                f"as breakpoint {breakpoint_id}"
+            )
+
+            return
 
         marker = self.EVENT_MARKERS[api]
 
@@ -439,9 +461,186 @@ class RuntimeDecryptor:
                 f"{output}"
             )
 
+        breakpoint_id = self._find_api_breakpoint_id(api)
+
+        self._api_breakpoint_ids[api] = breakpoint_id
+
         print(
-            f"[breakpoint] Installed KERNELBASE!{api}"
+            f"[breakpoint] Installed KERNELBASE!{api} "
+            f"(ID={breakpoint_id})"
         )
+
+    def _find_api_breakpoint_id(
+        self,
+        api: str,
+    ) -> int:
+        '''
+        Find the CDB breakpoint ID associated with an API.
+
+        Query the debugger breakpoint list and identify the
+        breakpoint using its unique event marker.
+
+        Return the numeric breakpoint ID.
+
+        Raise RuntimeDecryptError if the breakpoint cannot
+        be identified unambiguously.
+        '''
+
+        marker = self.EVENT_MARKERS[api]
+
+        output = self.debugger.command("bl")
+
+        matches = []
+
+        for line in output.splitlines():
+
+            if marker not in line:
+                continue
+
+            match = re.match(
+                r"^\s*(\d+)\s+",
+                line,
+            )
+
+            if match is None:
+                continue
+
+            breakpoint_id = int(
+                match.group(1),
+                10,
+            )
+
+            matches.append(breakpoint_id)
+
+        if len(matches) != 1:
+
+            raise RuntimeDecryptError(
+                f"Expected exactly one breakpoint for {api}, "
+                f"found {len(matches)}.\n"
+                f"Breakpoint listing:\n{output}"
+            )
+
+        return matches[0]
+
+    def _disable_api_breakpoint(
+        self,
+        api: str,
+    ) -> None:
+        '''
+        Disable a registered API breakpoint by its CDB ID.
+
+        Preserve all other software and hardware breakpoints.
+        '''
+
+        if api not in self._api_breakpoint_ids:
+
+            raise RuntimeDecryptError(
+                f"No registered breakpoint for {api}"
+            )
+
+        breakpoint_id = self._api_breakpoint_ids[api]
+
+        output = self.debugger.command(
+            f"bd {breakpoint_id}"
+        )
+
+        if "error" in output.lower():
+            raise RuntimeDecryptError(
+                f"Failed to disable {api} breakpoint:\n"
+                f"{output}"
+            )
+
+        print(
+            f"[breakpoint] Disabled {api} "
+            f"(ID={breakpoint_id})"
+        )
+
+
+    def _enable_api_breakpoint(
+        self,
+        api: str,
+    ) -> None:
+        '''
+        Re-enable a registered API breakpoint by its CDB ID.
+
+        Preserve all other software and hardware breakpoints.
+        '''
+
+        if api not in self._api_breakpoint_ids:
+
+            raise RuntimeDecryptError(
+                f"No registered breakpoint for {api}"
+            )
+
+        breakpoint_id = self._api_breakpoint_ids[api]
+
+        output = self.debugger.command(
+            f"be {breakpoint_id}"
+        )
+
+        if "error" in output.lower():
+            raise RuntimeDecryptError(
+                f"Failed to enable {api} breakpoint:\n"
+                f"{output}"
+            )
+
+        print(
+            f"[breakpoint] Enabled {api} "
+            f"(ID={breakpoint_id})"
+        )
+
+    def _remove_api_breakpoint(
+        self,
+        api: str,
+    ) -> None:
+        '''
+        Permanently remove a registered API breakpoint.
+
+        Use its numeric CDB breakpoint ID.
+
+        Remove the corresponding registry entry only after
+        the debugger accepts the clear command.
+
+        Preserve all unrelated breakpoints.
+        '''
+
+        if api not in self._api_breakpoint_ids:
+
+            raise RuntimeDecryptError(
+                f"No registered breakpoint for {api}"
+            )
+
+        breakpoint_id = self._api_breakpoint_ids[api]
+
+        output = self.debugger.command(
+            f"bc {breakpoint_id}"
+        )
+
+        if "error" in output.lower():
+            raise RuntimeDecryptError(
+                f"Failed to remove {api} breakpoint:\n"
+                f"{output}"
+            )
+
+        del self._api_breakpoint_ids[api]
+
+        print(
+            f"[breakpoint] Removed {api} "
+            f"(ID={breakpoint_id})"
+        )
+
+    def _clear_all_breakpoints(self) -> None:
+        '''
+        Remove every debugger breakpoint and invalidate
+        all locally tracked API breakpoint IDs.
+
+        Use this method instead of calling the debugger's
+        clear_all_breakpoints() directly.
+        '''
+
+        self.debugger.clear_all_breakpoints()
+
+        self._api_breakpoint_ids.clear()
 
     def _set_source_breakpoint(self, source_va: int) -> None:
         '''
@@ -518,7 +717,7 @@ class RuntimeDecryptor:
         - whether the caller belongs to the executable image
         '''
 
-        self.debugger.clear_all_breakpoints()
+        self._clear_all_breakpoints()
 
         for api in self.BOOTSTRAP_APIS:
             self._set_api_breakpoint(api)
@@ -665,7 +864,7 @@ class RuntimeDecryptor:
                 return_address=return_address,
             )
 
-            self.debugger.clear_all_breakpoints()
+            self._clear_all_breakpoints()
 
             return tuple(events), allocation
 
@@ -838,7 +1037,7 @@ class RuntimeDecryptor:
             + len(instruction.raw_bytes)
         )
 
-        self.debugger.clear_all_breakpoints()
+        self._clear_all_breakpoints()
 
         self.debugger.set_breakpoint(next_va)
 
@@ -869,7 +1068,7 @@ class RuntimeDecryptor:
                 "Unexpected final RDI"
             )
 
-        self.debugger.clear_all_breakpoints()
+        self._clear_all_breakpoints()
 
         print("[copy] Bulk copy completed")
 
@@ -975,7 +1174,7 @@ class RuntimeDecryptor:
         # Step 2: Install write breakpoint
         # --------------------------------------------------
 
-        self.debugger.clear_all_breakpoints()
+        self._clear_all_breakpoints()
 
         breakpoint_output = self.debugger.command(
             f"ba w8 0x{watch_va:X}"
@@ -1113,7 +1312,592 @@ class RuntimeDecryptor:
 
         finally:
 
-            self.debugger.clear_all_breakpoints()
+            self._clear_all_breakpoints()
+
+    def _relative_branch_target(
+        self,
+        instruction_va: int,
+        raw_bytes: bytes,
+    ) -> tuple[int, str] | None:
+        '''
+        Decode the destination of a direct relative x64 branch.
+
+        Supported encodings:
+
+            EB cb           JMP rel8
+            E9 cd           JMP rel32
+            70-7F cb        Jcc rel8
+            0F 80-8F cd     Jcc rel32
+
+        Return:
+
+            (destination_va, branch_type)
+
+        Branch types:
+
+            "jmp"          Unconditional branch
+            "conditional"  Conditional branch
+
+        Return None for unsupported instructions.
+
+        Indirect branches are intentionally not decoded.
+        '''
+
+        if not raw_bytes:
+            return None
+
+        opcode = raw_bytes[0]
+
+        # --------------------------------------------------
+        # Short unconditional JMP
+        # --------------------------------------------------
+
+        if opcode == 0xEB and len(raw_bytes) == 2:
+
+            displacement = struct.unpack_from(
+                "<b",
+                raw_bytes,
+                1,
+            )[0]
+
+            destination = (
+                instruction_va
+                + len(raw_bytes)
+                + displacement
+            )
+
+            return destination, "jmp"
+
+        # --------------------------------------------------
+        # Near unconditional JMP
+        # --------------------------------------------------
+
+        if opcode == 0xE9 and len(raw_bytes) == 5:
+
+            displacement = struct.unpack_from(
+                "<i",
+                raw_bytes,
+                1,
+            )[0]
+
+            destination = (
+                instruction_va
+                + len(raw_bytes)
+                + displacement
+            )
+
+            return destination, "jmp"
+
+        # --------------------------------------------------
+        # Short conditional branch
+        # --------------------------------------------------
+
+        if 0x70 <= opcode <= 0x7F and len(raw_bytes) == 2:
+
+            displacement = struct.unpack_from(
+                "<b",
+                raw_bytes,
+                1,
+            )[0]
+
+            destination = (
+                instruction_va
+                + len(raw_bytes)
+                + displacement
+            )
+
+            return destination, "conditional"
+
+        # --------------------------------------------------
+        # Near conditional branch
+        # --------------------------------------------------
+
+        if (
+            len(raw_bytes) == 6
+            and raw_bytes[0] == 0x0F
+            and 0x80 <= raw_bytes[1] <= 0x8F
+        ):
+
+            displacement = struct.unpack_from(
+                "<i",
+                raw_bytes,
+                2,
+            )[0]
+
+            destination = (
+                instruction_va
+                + len(raw_bytes)
+                + displacement
+            )
+
+            return destination, "conditional"
+
+        return None
+
+    def _discover_acceptance_breakpoint(
+        self,
+        allocation: AllocationInfo,
+        copy: CopyInfo,
+        max_scan_bytes: int = 0x600,
+    ) -> int:
+        '''
+        Discover the Hyperion loader's accepted-transformation
+        branch without using a hardcoded instruction address.
+
+        Start immediately after the initial ciphertext
+        REP MOVSQ operation.
+
+        Search a bounded instruction region for a retry-loop
+        structure containing:
+
+            1. A candidate REP MOVSQ restoration operation.
+            2. A conditional branch that skips restoration.
+            3. A backward unconditional jump that retries.
+
+        The conditional branch destination is treated as
+        the candidate acceptance breakpoint.
+
+        This method recognizes the control-flow structure
+        observed in the current Hyperion loader family.
+
+        It does not perform full control-flow or register
+        data-flow analysis.
+
+        Return:
+
+            Runtime address of the acceptance branch target.
+
+        Raise RuntimeDecryptError if discovery is ambiguous
+        or unsuccessful.
+        '''
+
+        # --------------------------------------------------
+        # Step 1: Determine the scan starting address
+        # --------------------------------------------------
+
+        initial_copy = self.debugger.disassemble_one(
+            copy.instruction_va
+        )
+
+        scan_start = (
+            copy.instruction_va
+            + len(initial_copy.raw_bytes)
+        )
+
+        scan_end = scan_start + max_scan_bytes
+
+        print(
+            "\n[decrypt-discovery] Analyzing loader control flow."
+        )
+
+        print(
+            f"[decrypt-discovery] Scan start: "
+            f"0x{scan_start:X}"
+        )
+
+        print(
+            f"[decrypt-discovery] Scan end: "
+            f"0x{scan_end:X}"
+        )
+
+        print(
+            f"[decrypt-discovery] Original source: "
+            f"0x{copy.source_va:X}"
+        )
+
+        print(
+            f"[decrypt-discovery] Temporary allocation: "
+            f"0x{allocation.base:X}"
+        )
+
+        # --------------------------------------------------
+        # Step 2: Disassemble bounded instruction region
+        # --------------------------------------------------
+
+        instructions = []
+
+        current_va = scan_start
+
+        while current_va < scan_end:
+
+            instruction = self.debugger.disassemble_one(
+                current_va
+            )
+
+            raw_bytes = instruction.raw_bytes
+
+            if not raw_bytes:
+                raise RuntimeDecryptError(
+                    "Unable to decode loader instruction at "
+                    f"0x{current_va:X}"
+                )
+
+            instructions.append(
+                {
+                    "va": current_va,
+                    "end": current_va + len(raw_bytes),
+                    "raw": raw_bytes,
+                    "mnemonic": instruction.mnemonic.lower(),
+                    "operands": instruction.operands.lower(),
+                }
+            )
+
+            current_va += len(raw_bytes)
+
+        # --------------------------------------------------
+        # Step 3: Identify candidate restoration operations
+        # --------------------------------------------------
+
+        restoration_candidates = []
+
+        for index, instruction in enumerate(instructions):
+
+            raw_bytes = instruction["raw"]
+
+            is_rep_movsq = (
+                raw_bytes.startswith(b"\xF3\x48\xA5")
+                or raw_bytes.startswith(b"\x48\xF3\xA5")
+            )
+
+            if not is_rep_movsq:
+                continue
+
+            # Exclude the initial ciphertext backup copy.
+            if instruction["va"] == copy.instruction_va:
+                continue
+
+            restoration_candidates.append(
+                (index, instruction)
+            )
+
+        if not restoration_candidates:
+
+            raise RuntimeDecryptError(
+                "No candidate ciphertext-restoration "
+                "REP MOVSQ instruction was found."
+            )
+
+        print(
+            "[decrypt-discovery] Candidate restoration "
+            f"instructions: {len(restoration_candidates)}"
+        )
+
+        # --------------------------------------------------
+        # Step 4: Analyze surrounding control flow
+        # --------------------------------------------------
+
+        acceptance_candidates = []
+
+        for restore_index, restore in restoration_candidates:
+
+            restore_va = restore["va"]
+
+            print(
+                "[decrypt-discovery] Examining restoration "
+                f"candidate at 0x{restore_va:X}"
+            )
+
+            # --------------------------------------------------
+            # Find a backward retry jump after restoration
+            # --------------------------------------------------
+
+            retry_jumps = []
+
+            for instruction in instructions[restore_index + 1:]:
+
+                decoded = self._relative_branch_target(
+                    instruction["va"],
+                    instruction["raw"],
+                )
+
+                if decoded is None:
+                    continue
+
+                target, branch_type = decoded
+
+                if branch_type != "jmp":
+                    continue
+
+                if target >= instruction["va"]:
+                    continue
+
+                # The retry destination must precede
+                # the restoration operation.
+                if target >= restore_va:
+                    continue
+
+                retry_jumps.append(
+                    {
+                        "va": instruction["va"],
+                        "end": instruction["end"],
+                        "target": target,
+                    }
+                )
+
+            if not retry_jumps:
+                continue
+
+            # --------------------------------------------------
+            # Find a conditional branch before restoration
+            # whose target skips the restoration operation.
+            # --------------------------------------------------
+
+            for instruction in instructions[:restore_index]:
+
+                decoded = self._relative_branch_target(
+                    instruction["va"],
+                    instruction["raw"],
+                )
+
+                if decoded is None:
+                    continue
+
+                target, branch_type = decoded
+
+                if branch_type != "conditional":
+                    continue
+
+                # Accepted path must bypass restoration.
+                if target <= restore_va:
+                    continue
+
+                for retry in retry_jumps:
+
+                    # The retry jump should occur after
+                    # restoration and before the accepted path.
+                    if not (
+                        restore_va
+                        < retry["va"]
+                        < target
+                    ):
+                        continue
+
+                    # The backward jump must return to code
+                    # before the conditional branch.
+                    if retry["target"] >= instruction["va"]:
+                        continue
+
+                    # Avoid selecting a branch that jumps
+                    # outside the analyzed instruction region.
+                    if not (
+                        scan_start <= target < scan_end
+                    ):
+                        continue
+
+                    acceptance_candidates.append(
+                        {
+                            "acceptance_va": target,
+                            "branch_va": instruction["va"],
+                            "restoration_va": restore_va,
+                            "retry_va": retry["va"],
+                            "retry_target": retry["target"],
+                        }
+                    )
+
+        # --------------------------------------------------
+        # Step 5: Deduplicate acceptance destinations
+        # --------------------------------------------------
+
+        unique_candidates = {}
+
+        for candidate in acceptance_candidates:
+
+            acceptance_va = candidate["acceptance_va"]
+
+            unique_candidates.setdefault(
+                acceptance_va,
+                candidate,
+            )
+
+        candidates = list(unique_candidates.values())
+
+        # --------------------------------------------------
+        # Step 6: Require an unambiguous result
+        # --------------------------------------------------
+
+        if not candidates:
+
+            raise RuntimeDecryptError(
+                "Unable to discover a loader acceptance "
+                "branch from the restoration/retry structure."
+            )
+
+        if len(candidates) != 1:
+
+            addresses = ", ".join(
+                f"0x{candidate['acceptance_va']:X}"
+                for candidate in candidates
+            )
+
+            raise RuntimeDecryptError(
+                "Ambiguous loader acceptance candidates: "
+                + addresses
+            )
+
+        candidate = candidates[0]
+
+        acceptance_va = candidate["acceptance_va"]
+
+        print(
+            "\n[decrypt-discovery] Loader control-flow "
+            "candidate identified."
+        )
+
+        print(
+            f"  Conditional branch: "
+            f"0x{candidate['branch_va']:X}"
+        )
+
+        print(
+            f"  Restoration operation: "
+            f"0x{candidate['restoration_va']:X}"
+        )
+
+        print(
+            f"  Retry jump: "
+            f"0x{candidate['retry_va']:X}"
+        )
+
+        print(
+            f"  Retry destination: "
+            f"0x{candidate['retry_target']:X}"
+        )
+
+        print(
+            f"  Acceptance destination: "
+            f"0x{acceptance_va:X}"
+        )
+
+        return acceptance_va
+
+    def _await_recovered_pe_success(
+        self,
+        allocation: AllocationInfo,
+        copy: CopyInfo,
+    ) -> RecoveredPE:
+        '''
+        Synchronize with successful Hyperion runtime decryption.
+
+        Workflow:
+
+            1. Discover the loader acceptance breakpoint.
+            2. Install a software execution breakpoint.
+            3. Continue execution through transformation attempts.
+            4. Stop at the accepted-transformation path.
+            5. Validate the recovered PE in the original source.
+            6. Return recovered PE metadata.
+
+        The recovered PE is not dumped here.
+
+        Its metadata will be used to identify the final runtime
+        OEP and continue execution until that OEP is reached.
+        '''
+
+        # --------------------------------------------------
+        # Step 1: Discover acceptance breakpoint
+        # --------------------------------------------------
+
+        acceptance_va = self._discover_acceptance_breakpoint(
+            allocation=allocation,
+            copy=copy,
+        )
+
+        # --------------------------------------------------
+        # Step 2: Install breakpoint
+        # --------------------------------------------------
+
+        self._clear_all_breakpoints()
+
+        self.debugger.set_breakpoint(
+            acceptance_va
+        )
+
+        print(
+            "\n[decrypt] Waiting for accepted "
+            "transformation."
+        )
+
+        print(
+            f"[decrypt] Acceptance breakpoint: "
+            f"0x{acceptance_va:X}"
+        )
+
+        # --------------------------------------------------
+        # Step 3: Continue through decryption attempts
+        # --------------------------------------------------
+
+        self.debugger.continue_execution()
+
+        # --------------------------------------------------
+        # Step 4: Confirm expected execution location
+        # --------------------------------------------------
+
+        self._require_rip(
+            acceptance_va
+        )
+
+        print(
+            "\n[decrypt] Accepted-transformation "
+            "breakpoint reached."
+        )
+
+        # --------------------------------------------------
+        # Step 5: Validate recovered PE
+        # --------------------------------------------------
+
+        recovered = self._parse_recovered_pe(
+            source_va=copy.source_va,
+            source_size=copy.size,
+        )
+
+        if recovered is None:
+
+            raise RuntimeDecryptError(
+                "Acceptance breakpoint was reached, "
+                "but the original source buffer does not "
+                "contain a structurally valid recovered PE."
+            )
+
+        # --------------------------------------------------
+        # Step 6: Report recovered metadata
+        # --------------------------------------------------
+
+        print(
+            "\n[decrypt] Reconstructed PE validated."
+        )
+
+        print(
+            f"[decrypt] Original source: "
+            f"0x{copy.source_va:X}"
+        )
+
+        print(
+            f"[decrypt] Recovered PE VA: "
+            f"0x{recovered.buffer_va:X}"
+        )
+
+        print(
+            f"[decrypt] Preferred ImageBase: "
+            f"0x{recovered.preferred_image_base:X}"
+        )
+
+        print(
+            f"[decrypt] SizeOfImage: "
+            f"0x{recovered.image_size:X}"
+        )
+
+        print(
+            f"[decrypt] OEP RVA: "
+            f"0x{recovered.oep_rva:X}"
+        )
+
+        # --------------------------------------------------
+        # Step 7: Remove acceptance breakpoint
+        # --------------------------------------------------
+
+        self._clear_all_breakpoints()
+
+        return recovered
 
     # ----------------------------------------------------------
     # Combined decryption and reconstruction monitoring
@@ -1125,128 +1909,139 @@ class RuntimeDecryptor:
         copy: CopyInfo,
         image_base: int,
         image_end: int,
+        recovered: RecoveredPE,
     ) -> tuple[RecoveredPE, tuple[ProtectionEvent, ...]]:
         '''
-        Begin monitoring immediately after REP MOVSQ.
+        Monitor final image reconstruction after successful
+        Hyperion runtime decryption.
 
-        Monitor:
-            - Original ciphertext source header writes
-            - VirtualProtect calls
-            - Candidate OEP execution
+        The recovered PE has already been validated at the
+        loader acceptance breakpoint.
 
-        The intermediate PE is parsed only within a bounded
-        region of the known ciphertext source.
+        Workflow:
 
-        VirtualProtect events provide reconstruction
-        synchronization points.
+            1. Calculate candidate runtime OEP.
+            2. Install a hardware execution breakpoint.
+            3. Monitor VirtualProtect calls.
+            4. Record completed protection changes.
+            5. Continue until execution reaches the OEP.
+            6. Validate the final mapped image.
 
-        Track whether VirtualProtect modifies the recovered
-        OEP region and whether the requested protection
-        permits execution.
-
-        The final mapped image is checked at the OEP.
+        The debugger remains paused at the OEP when this
+        method returns successfully.
         '''
 
-        source_va = copy.source_va
-        source_size = copy.size
+        oep_va = image_base + recovered.oep_rva
 
-        recovered = self._parse_recovered_pe(
-            source_va,
-            source_size,
-        )
+        if not (
+            image_base <= oep_va < image_end
+        ):
+            raise RuntimeDecryptError(
+                "Candidate OEP falls outside the loaded image."
+            )
 
         protection_events = []
 
-        oep_va = None
-
         executable_protections = {
-            0x10,  # PAGE_EXECUTE
-            0x20,  # PAGE_EXECUTE_READ
-            0x40,  # PAGE_EXECUTE_READWRITE
-            0x80,  # PAGE_EXECUTE_WRITECOPY
+            0x10,
+            0x20,
+            0x40,
+            0x80,
         }
 
-        def install_monitor_breakpoints() -> None:
-            '''
-            Install monitoring breakpoints based on the
-            current recovery state.
-            '''
+        # --------------------------------------------------
+        # Step 1: Install reconstruction breakpoints
+        # --------------------------------------------------
 
-            self.debugger.clear_all_breakpoints()
+        self._clear_all_breakpoints()
 
-            self._set_api_breakpoint("VirtualProtect")
+        self._set_api_breakpoint(
+            "VirtualProtect"
+        )
 
-            if recovered is None:
-                self._set_source_breakpoint(source_va)
+        self._set_oep_breakpoint(
+            oep_va
+        )
 
-            if oep_va is not None:
-                self._set_oep_breakpoint(oep_va)
+        print(
+            "\n[reconstruction] Monitoring final image."
+        )
 
-        if recovered is not None:
-            oep_va = image_base + recovered.oep_rva
+        print(
+            f"[reconstruction] OEP breakpoint: "
+            f"0x{oep_va:X}"
+        )
 
-            if not (
-                image_base <= oep_va < image_end
-            ):
-                raise RuntimeDecryptError(
-                    "Candidate OEP outside main image"
-                )
+        # --------------------------------------------------
+        # Step 2: Process debugger events
+        # --------------------------------------------------
 
-        install_monitor_breakpoints()
-
-        for event_number in range(self.max_monitor_events):
+        for event_number in range(
+            self.max_monitor_events
+        ):
 
             output = self.debugger.continue_execution()
 
-            event = self._classify_event(output)
+            event = self._classify_event(
+                output
+            )
 
             if event is None:
+
                 raise RuntimeDecryptError(
                     "Unclassified reconstruction stop:\n"
                     + output[-1500:]
                 )
 
-            print(
-                f"[monitor] Event {event_number + 1}: {event}"
-            )
-
             # --------------------------------------------------
-            # OEP execution confirmation
+            # OEP reached
             # --------------------------------------------------
 
             if event == "OEP":
 
-                if recovered is None or oep_va is None:
-                    raise RuntimeDecryptError(
-                        "OEP reached without recovered PE"
-                    )
+                self._require_rip(
+                    oep_va
+                )
 
-                self._require_rip(oep_va)
+                print(
+                    "\n[oep] Original entry point reached."
+                )
+
+                print(
+                    f"[oep] RIP: 0x{oep_va:X}"
+                )
 
                 self._validate_mapped_image(
                     image_base=image_base,
                     recovered=recovered,
                 )
 
-                self.debugger.clear_all_breakpoints()
+                self._clear_all_breakpoints()
 
                 print(
-                    f"[oep] Confirmed: 0x{oep_va:X}"
+                    "[oep] Final mapped image validated."
                 )
 
-                return recovered, tuple(protection_events)
+                return (
+                    recovered,
+                    tuple(protection_events),
+                )
 
             # --------------------------------------------------
-            # VirtualProtect monitoring
+            # VirtualProtect observed
             # --------------------------------------------------
 
             if event == "VirtualProtect":
 
                 request = self._capture_virtual_protect()
 
-                # Temporarily remove breakpoints so gu can
-                # return from the API without interruption.
-                self.debugger.clear_all_breakpoints()
+                # Temporarily remove breakpoints before
+                # stepping out of VirtualProtect.
+                #
+                # This preserves the behavior of the existing
+                # debugger integration.
+
+                self._clear_all_breakpoints()
 
                 self.debugger.command(
                     "gu",
@@ -1269,9 +2064,12 @@ class RuntimeDecryptor:
                     succeeded=succeeded,
                 )
 
-                protection_events.append(completed)
+                protection_events.append(
+                    completed
+                )
 
                 if succeeded:
+
                     print(
                         "[protect] "
                         f"0x{completed.address:X} "
@@ -1279,153 +2077,66 @@ class RuntimeDecryptor:
                         f"protect=0x{completed.new_protection:X}"
                     )
 
-                # VirtualProtect returning is also a
-                # synchronization point for inspecting
-                # the ciphertext source.
-                if recovered is None:
+                # --------------------------------------------------
+                # Determine whether OEP protection changed
+                # --------------------------------------------------
 
-                    recovered = self._parse_recovered_pe(
-                        source_va,
-                        source_size,
+                oep_region_modified = (
+                    succeeded
+                    and completed.address <= oep_va
+                    < completed.address + completed.size
+                )
+
+                if oep_region_modified:
+
+                    protection_base = (
+                        completed.new_protection & 0xFF
                     )
 
-                # Initialize the OEP once the recovered
-                # PE headers have passed validation.
-                if recovered is not None and oep_va is None:
-
-                    oep_va = image_base + recovered.oep_rva
-
-                    if not (
-                        image_base <= oep_va < image_end
-                    ):
-                        raise RuntimeDecryptError(
-                            "Candidate OEP outside main image"
-                        )
-
-                    print(
-                        f"[decrypt] PE: "
-                        f"0x{recovered.buffer_va:X}"
+                    is_executable = (
+                        protection_base
+                        in executable_protections
                     )
 
                     print(
-                        f"[decrypt] OEP RVA: "
-                        f"0x{recovered.oep_rva:X}"
+                        "[protect] OEP region modified."
                     )
 
                     print(
-                        f"[decrypt] OEP VA: "
-                        f"0x{oep_va:X}"
-                    )
-
-                # Determine whether this completed
-                # VirtualProtect call affected the OEP.
-                if recovered is not None and oep_va is not None:
-
-                    oep_protection_changed = (
-                        completed.succeeded
-                        and completed.address <= oep_va
-                        < completed.address + completed.size
-                    )
-
-                    if oep_protection_changed:
-
-                        protection_base = (
-                            completed.new_protection & 0xFF
-                        )
-
-                        is_executable = (
-                            protection_base
-                            in executable_protections
-                        )
-
-                        print(
-                            "[protect] OEP region modified:\n"
-                            f"  OEP VA:         0x{oep_va:X}\n"
-                            f"  Region base:    "
-                            f"0x{completed.address:X}\n"
-                            f"  Region size:    "
-                            f"0x{completed.size:X}\n"
-                            f"  New protection: "
-                            f"0x{completed.new_protection:X}\n"
-                            f"  Executable:     {is_executable}"
-                        )
-
-                install_monitor_breakpoints()
-                continue
-
-            # --------------------------------------------------
-            # Ciphertext source write monitoring
-            # --------------------------------------------------
-
-            if event == "SourceWrite":
-
-                # Report the first ten source-write events,
-                # then periodically report execution progress.
-                if (
-                    event_number < 10
-                    or event_number % 100 == 0
-                ):
-
-                    rip = self.debugger.get_register("rip")
-
-                    instruction = (
-                        self.debugger.disassemble_one(rip)
+                        f"  OEP: 0x{oep_va:X}"
                     )
 
                     print(
-                        f"[source-write] "
-                        f"Event={event_number + 1} "
-                        f"RIP=0x{rip:X} "
-                        f"{instruction.mnemonic} "
-                        f"{instruction.operands}"
-                    )
-
-                if recovered is None:
-
-                    recovered = self._parse_recovered_pe(
-                        source_va,
-                        source_size,
-                    )
-
-                if recovered is not None and oep_va is None:
-
-                    oep_va = image_base + recovered.oep_rva
-
-                    if not (
-                        image_base <= oep_va < image_end
-                    ):
-                        raise RuntimeDecryptError(
-                            "Candidate OEP outside main image"
-                        )
-
-                    print(
-                        f"[decrypt] Recovered PE: "
-                        f"0x{recovered.buffer_va:X}"
+                        f"  Protection: "
+                        f"0x{completed.new_protection:X}"
                     )
 
                     print(
-                        f"[decrypt] OEP RVA: "
-                        f"0x{recovered.oep_rva:X}"
+                        f"  Executable: {is_executable}"
                     )
 
-                    print(
-                        f"[decrypt] OEP VA: "
-                        f"0x{oep_va:X}"
-                    )
+                # --------------------------------------------------
+                # Reinstall monitoring breakpoints
+                # --------------------------------------------------
 
-                    # Remove the source-write breakpoint
-                    # and install the OEP breakpoint.
-                    install_monitor_breakpoints()
+                self._set_api_breakpoint(
+                    "VirtualProtect"
+                )
+
+                self._set_oep_breakpoint(
+                    oep_va
+                )
 
                 continue
 
             raise RuntimeDecryptError(
-                f"Unexpected monitoring event: {event}"
+                f"Unexpected reconstruction event: {event}"
             )
 
         raise RuntimeDecryptError(
-            "OEP not reached within monitoring event limit"
-        )
+            "OEP was not reached within the "
+            "configured monitoring event limit."
+        ) 
 
     # ----------------------------------------------------------
     # VirtualProtect handling
