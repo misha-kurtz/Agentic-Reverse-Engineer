@@ -1,4 +1,4 @@
-"""
+'''
 Real CDB integration test for VirtualProtect return handling.
 
 Validates:
@@ -18,7 +18,9 @@ Requires:
 
 Run:
     python virtual-protect-debugger-integration-test.py
-"""
+
+
+'''
 
 from __future__ import annotations
 

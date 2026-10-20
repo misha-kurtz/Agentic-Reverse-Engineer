@@ -1,4 +1,4 @@
-"""
+'''
 Real CDB integration test: VirtualProtect + hardware execution breakpoint.
 
 Validates:
@@ -15,7 +15,8 @@ Validates:
 
 Run:
     python virtual-protect-oep-debugger-integration-test.py
-"""
+
+'''
 
 from __future__ import annotations
 
