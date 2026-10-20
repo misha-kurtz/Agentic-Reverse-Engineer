@@ -14,10 +14,10 @@ Validates:
 Requires:
     - Windows x64
     - Windows Debugging Tools (CDB)
-    - Compiled virtualprotect_test_target.exe
+    - Compiled virtual-protect-test-target.exe
 
 Run:
-    python virtualprotect_integration_test.py
+    python virtual-protect-debugger-integration-test.py
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CDB_PATH = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
-TEST_EXECUTABLE = PROJECT_ROOT / "virtualprotect_test_target.exe"
+TEST_EXECUTABLE = PROJECT_ROOT / "virtual-protect-test-target.exe"
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
