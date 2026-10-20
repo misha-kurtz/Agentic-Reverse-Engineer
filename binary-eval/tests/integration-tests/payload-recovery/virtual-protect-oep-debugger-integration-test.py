@@ -113,7 +113,12 @@ class VirtualProtectOEPIntegrationTest:
 
         before = self.show_breakpoints()
 
-        self.decryptor._set_oep_breakpoint(self.oep_va)
+        #self.decryptor._set_oep_breakpoint(self.oep_va)
+
+        command = f'ba e1 0x{self.oep_va:X} ".echo HYP_OEP"'
+        print(f"[INFO] Installing hardware breakpoint: {command}")
+        output = self.debugger.command(command)
+        print(f"[INFO] CDB response:\n{output}")
 
         after = self.show_breakpoints()
         new_ids = set(after) - set(before)
