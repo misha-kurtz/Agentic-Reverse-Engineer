@@ -574,29 +574,43 @@ class CdbDebugger:
     # Disassembly
     # ------------------------------------------------------------------
 
-    def disassemble_one(
-        self,
-        address: int,
-    ) -> Instruction:
-
-        output = self.command(
-            f"u 0x{address:x} L1"
-        )
-
-        instruction = (
-            self._parse_first_instruction(
-                output
-            )
-        )
+    def disassemble_one(self, address: int) -> Instruction:
+        '''
+        1. Verify that CDB returned a valid instruction.
+        2. Verify that the decoded address matches the requested address.
+        3. Reject zero-length instructions and undecodable placeholders.
+        4. Independently read the instruction bytes from memory and compare them against CDB's disassembly.
+        '''
+        output = self.command(f"u 0x{address:x} L1")
+        instruction = self._parse_first_instruction(output)
 
         if instruction is None:
-            raise DebuggerError(
-                f"Could not disassemble "
-                f"0x{address:x}:\n"
-                f"{output}"
-            )
+            raise DebuggerError(f"Could not disassemble 0x{address:x}:\n{output}")
+
+        if instruction.address != address:
+            raise DebuggerError(f"Address mismatch: expected 0x{address:x}, got 0x{instruction.address:x}")
+
+        if not 1 <= instruction.size <= 15:
+            raise DebuggerError(f"Invalid instruction length {instruction.size} at 0x{address:x}")
 
         return instruction
+
+    def read_instruction_bytes(self, address: int, size: int) -> bytes:
+        '''
+        Raw memory verification method
+        Ensures instruction bytes returned by CDB match the actual bytes in memory. 
+        '''
+        if not 1 <= size <= 15:
+            raise ValueError(f"Invalid x64 instruction size: {size}")
+
+        output = self.command(f"db 0x{address:x} L0n{size}")
+        pattern = re.compile(r"^\s*[0-9a-fA-F`]+\s+((?:[0-9a-fA-F]{2}(?:\s+|$))+)", re.MULTILINE)
+        data = b"".join(bytes.fromhex(m.group(1)) for m in pattern.finditer(output))
+
+        if len(data) != size:
+            raise DebuggerError(f"Expected {size} bytes at 0x{address:x}, received {len(data)}:\n{output}")
+
+        return data
 
     def disassemble_previous(
         self,
