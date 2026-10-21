@@ -129,7 +129,10 @@ def test_instruction_limit():
     assert len(graph.instructions) == 5
     assert len(debugger.calls) == 5
     assert set(graph.instructions) == set(range(0x1000, 0x1005))
-    assert 0x1005 in graph.unresolved
+    assert 0x1005 in graph.pending
+    assert graph.truncated
+    assert not graph.unresolved
+    assert not graph.decode_errors
 
     print("[PASS] Instruction limit: traversal stops at configured maximum")
 
