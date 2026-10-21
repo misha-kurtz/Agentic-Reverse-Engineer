@@ -1,3 +1,29 @@
+'''
+CFG traversal unit test using a mock debugger to simulate instruction disassembly and control flow analysis. This test verifies the correct construction of the control flow graph (CFG) from a set of predefined instructions, ensuring that edges and unresolved instructions are accurately represented. The mock debugger provides a controlled environment for testing without relying on an actual debugger or executable.
+
+Input instructions:
+        0x1000: make_instruction(0x1000, "85c0", "test"),
+        0x1002: make_instruction(0x1002, "7407", "je"),
+        0x1004: make_instruction(0x1004, "bb01000000", "mov"),
+        0x1009: make_instruction(0x1009, "eb05", "jmp"),
+        0x100B: make_instruction(0x100B, "0000", "add"),
+        0x1010: make_instruction(0x1010, "c3", "ret"),
+
+
+Output CFG:
+                   0x1000
+                      |
+                   0x1002
+                  /      \
+              0x1004    0x100B
+                 |         |
+              0x1009    0x100D
+                 |         |
+              0x1010    Decode error
+                 |
+                RET
+'''
+
 from runners.debugger import Instruction, DebuggerError
 from runners.dynamic_cfg import ControlFlowAnalyzer
 

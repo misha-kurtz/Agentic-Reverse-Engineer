@@ -88,7 +88,7 @@ class ControlFlowAnalyzer:
         worklist = deque([entry_va])
         visited = set()
 
-        while worklist and len(visited) < self.max_instructions:
+        while worklist and len(graph.instructions) < self.max_instructions:
             address = worklist.popleft()
 
             if address in visited:
