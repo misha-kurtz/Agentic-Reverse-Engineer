@@ -88,13 +88,17 @@ class ControlFlowAnalyzer:
         worklist = deque([entry_va])
         visited = set()
 
-        while worklist and len(graph.instructions) < self.max_instructions:
-            address = worklist.popleft()
+        attempts = 0
+        max_attempts = self.max_instructions * 2
 
+        while worklist and len(graph.instructions) < self.max_instructions and attempts < max_attempts:
+            address = worklist.popleft()
+            
             if address in visited:
                 continue
 
             visited.add(address)
+            attempts += 1
 
             if not start_va <= address < end_va:
                 graph.unresolved.add(address)
