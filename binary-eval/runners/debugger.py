@@ -593,6 +593,14 @@ class CdbDebugger:
         if not 1 <= instruction.size <= 15:
             raise DebuggerError(f"Invalid instruction length {instruction.size} at 0x{address:x}")
 
+        actual = self.read_instruction_bytes(address, instruction.size)
+
+        if actual != instruction.raw_bytes:
+            raise DebuggerError(
+                f"Instruction bytes mismatch at 0x{address:x}: "
+                f"disassembly={instruction.raw_bytes.hex()}, memory={actual.hex()}"
+            )
+
         return instruction
 
     def read_instruction_bytes(self, address: int, size: int) -> bytes:

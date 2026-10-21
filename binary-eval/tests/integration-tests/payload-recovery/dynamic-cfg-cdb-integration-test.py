@@ -12,13 +12,12 @@ MAX_INSTRUCTIONS = 200
 FUNCTION_WINDOW = 0x200
 
 
-def create_debugger(executable: Path) -> CdbDebugger:
-    """
-    Initialize CdbDebugger using the launch interface
-    provided by runners/debugger.py.
-    """
-    raise NotImplementedError("Connect this function to your CdbDebugger constructor/launch method")
+CDB_PATH = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
 
+def create_debugger(executable: Path) -> CdbDebugger:
+    debugger = CdbDebugger(CDB_PATH, command_timeout=30.0)
+    debugger.launch(executable)
+    return debugger
 
 def resolve_symbol(debugger: CdbDebugger, symbol: str) -> int:
     output = debugger.command(f"x {symbol}")
@@ -88,6 +87,8 @@ def main() -> None:
     debugger = create_debugger(EXECUTABLE)
 
     try:
+        debugger.command(".sympath+ .")
+        debugger.command(".reload /f")
         entry_va = resolve_symbol(debugger, FUNCTION)
         start_va = entry_va
         end_va = entry_va + FUNCTION_WINDOW
@@ -110,8 +111,7 @@ def main() -> None:
         print("\n[PASS] Live CDB CFG integration test")
 
     finally:
-        # Add your debugger shutdown method here.
-        pass
+        debugger.close()
 
 
 if __name__ == "__main__":
