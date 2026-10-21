@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 
 import pefile
 
-from runners.debugger import CdbDebugger, ModuleInfo
+from runners.debugger import CdbDebugger, DebuggerError, ModuleInfo
 
 '''
 Hyperion Runtime Decryption Workflow
@@ -301,7 +301,7 @@ class RuntimeDecryptor:
             # Stage 4: Discover successful decryption
             # --------------------------------------------------
 
-            print("\n[hyperion] Discovering loader " "acceptance breakpoint.")
+            print("\n[hyperion] Discovering loader " "decryption success breakpoint.")
 
             recovered = self._await_recovered_pe_success(allocation=allocation, copy=copy)
 
@@ -1115,7 +1115,7 @@ class RuntimeDecryptor:
 
         return None
 
-    def _discover_acceptance_breakpoint(
+    def _discover_decryption_success_breakpoint(
         self,
         allocation: AllocationInfo,
         copy: CopyInfo,
@@ -1161,6 +1161,9 @@ class RuntimeDecryptor:
 
         scan_end = scan_start + max_scan_bytes
 
+        print(f"[decrypt-discovery] Initial copy VA: 0x{copy.instruction_va:X}")
+        print(f"[decrypt-discovery] Scan size: 0x{max_scan_bytes:X}")
+
         print("\n[decrypt-discovery] Analyzing loader control flow.")
 
         print(f"[decrypt-discovery] Scan start: " f"0x{scan_start:X}")
@@ -1176,29 +1179,40 @@ class RuntimeDecryptor:
         # --------------------------------------------------
 
         instructions = []
-
         current_va = scan_start
 
         while current_va < scan_end:
-
-            instruction = self.debugger.disassemble_one(current_va)
+            try:
+                instruction = self.debugger.disassemble_one(current_va)
+            except DebuggerError as exc:
+                raise RuntimeDecryptError(
+                    f"Loader disassembly stopped at 0x{current_va:X}. "
+                    f"Decoded {len(instructions)} instructions over "
+                    f"0x{current_va - scan_start:X} bytes. "
+                    f"Scan bounds: 0x{scan_start:X}-0x{scan_end:X}. "
+                    f"Debugger error: {exc}"
+                ) from exc
 
             raw_bytes = instruction.raw_bytes
 
             if not raw_bytes:
-                raise RuntimeDecryptError("Unable to decode loader instruction at " f"0x{current_va:X}")
+                raise RuntimeDecryptError(
+                    f"Empty instruction at 0x{current_va:X}."
+                )
 
-            instructions.append(
-                {
-                    "va": current_va,
-                    "end": current_va + len(raw_bytes),
-                    "raw": raw_bytes,
-                    "mnemonic": instruction.mnemonic.lower(),
-                    "operands": instruction.operands.lower(),
-                }
-            )
+            instructions.append({
+                "va": current_va,
+                "end": current_va + len(raw_bytes),
+                "raw": raw_bytes,
+                "mnemonic": instruction.mnemonic.lower(),
+                "operands": instruction.operands.lower(),
+            })
 
             current_va += len(raw_bytes)
+
+        print(f"[decrypt-discovery] Decoded {len(instructions)} instructions.")
+        print(f"[decrypt-discovery] Last decoded VA: 0x{instructions[-1]['va']:X}" if instructions else
+            "[decrypt-discovery] No instructions decoded.")
 
         # --------------------------------------------------
         # Step 3: Identify candidate restoration operations
@@ -1376,10 +1390,10 @@ class RuntimeDecryptor:
 
         Workflow:
 
-            1. Discover the loader acceptance breakpoint.
+            1. Discover the loader decryption success breakpoint.
             2. Install a software execution breakpoint.
             3. Continue execution through transformation attempts.
-            4. Stop at the accepted-transformation path.
+            4. Stop at the decrypted-transformation path.
             5. Validate the recovered PE in the original source.
             6. Return recovered PE metadata.
 
@@ -1390,10 +1404,10 @@ class RuntimeDecryptor:
         '''
 
         # --------------------------------------------------
-        # Step 1: Discover acceptance breakpoint
+        # Step 1: Discover decryption success breakpoint
         # --------------------------------------------------
 
-        acceptance_va = self._discover_acceptance_breakpoint(allocation=allocation, copy=copy)
+        decrypt_success_va = self._discover_decryption_success_breakpoint(allocation=allocation, copy=copy)
 
         # --------------------------------------------------
         # Step 2: Install breakpoint
@@ -1401,11 +1415,11 @@ class RuntimeDecryptor:
 
         self._clear_all_breakpoints()
 
-        self.debugger.set_breakpoint(acceptance_va)
+        self.debugger.set_breakpoint(decrypt_success_va)
 
-        print("\n[decrypt] Waiting for accepted " "transformation.")
+        print("\n[decrypt] Waiting for decrypted " "transformation.")
 
-        print(f"[decrypt] Acceptance breakpoint: " f"0x{acceptance_va:X}")
+        print(f"[decrypt] Decryption success breakpoint: " f"0x{decrypt_success_va:X}")
 
         # --------------------------------------------------
         # Step 3: Continue through decryption attempts
@@ -1417,9 +1431,9 @@ class RuntimeDecryptor:
         # Step 4: Confirm expected execution location
         # --------------------------------------------------
 
-        self._require_rip(acceptance_va)
+        self._require_rip(decrypt_success_va)
 
-        print("\n[decrypt] Accepted-transformation " "breakpoint reached.")
+        print("\n[decrypt] Decryption success " "breakpoint reached.")
 
         # --------------------------------------------------
         # Step 5: Validate recovered PE
@@ -1430,7 +1444,7 @@ class RuntimeDecryptor:
         if recovered is None:
 
             raise RuntimeDecryptError(
-                "Acceptance breakpoint was reached, "
+                "Decryption success breakpoint was reached, "
                 "but the original source buffer does not "
                 "contain a structurally valid recovered PE."
             )
@@ -1452,7 +1466,7 @@ class RuntimeDecryptor:
         print(f"[decrypt] OEP RVA: " f"0x{recovered.oep_rva:X}")
 
         # --------------------------------------------------
-        # Step 7: Remove acceptance breakpoint
+        # Step 7: Remove decryption success breakpoint
         # --------------------------------------------------
 
         self._clear_all_breakpoints()
