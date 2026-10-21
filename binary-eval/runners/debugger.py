@@ -604,8 +604,9 @@ class CdbDebugger:
             raise ValueError(f"Invalid x64 instruction size: {size}")
 
         output = self.command(f"db 0x{address:x} L0n{size}")
-        pattern = re.compile(r"^\s*[0-9a-fA-F`]+\s+((?:[0-9a-fA-F]{2}(?:\s+|$))+)", re.MULTILINE)
-        data = b"".join(bytes.fromhex(m.group(1)) for m in pattern.finditer(output))
+        pattern = re.compile(r"^\s*[0-9a-fA-F`]+\s+((?:[0-9a-fA-F]{2}[\s-]*)+)", re.MULTILINE)
+
+        data = b"".join(bytes.fromhex(m.group(1).replace("-", "")) for m in pattern.finditer(output))
 
         if len(data) != size:
             raise DebuggerError(f"Expected {size} bytes at 0x{address:x}, received {len(data)}:\n{output}")
