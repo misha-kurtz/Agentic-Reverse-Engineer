@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 from collections import deque
 import struct
+
 
 from runners.debugger import Instruction, CdbDebugger, DebuggerError
 
@@ -18,6 +19,8 @@ class ControlFlowGraph:
     edges: dict[int, set[int]]
     unresolved: set[int]
     decode_errors: dict[int, str]
+    truncated: bool = False
+    pending: set[int] = field(default_factory=set)
 
 def classify_control_flow(instruction: Instruction) -> ControlFlowInfo:
     mnemonic = instruction.mnemonic.lower()
@@ -66,10 +69,17 @@ def resolve_branch_target(instruction: Instruction) -> int | None:
         displacement = struct.unpack("<i", raw[2:6])[0]
         return address + 6 + displacement
 
+    if 0xE0 <= opcode <= 0xE3 and len(raw) >= 2:
+        displacement = struct.unpack("<b", raw[1:2])[0]
+        return address + 2 + displacement
+
     return None
 
 class ControlFlowAnalyzer:
     def __init__(self, debugger: CdbDebugger, max_instructions: int = 1000):
+        if max_instructions < 1:
+            raise ValueError("max_instructions must be positive")
+
         self.debugger = debugger
         self.max_instructions = max_instructions
 
@@ -143,6 +153,7 @@ class ControlFlowAnalyzer:
                     worklist.append(successor)
 
         if worklist:
-            graph.unresolved.update(worklist)
+            graph.truncated = True
+            graph.pending.update(worklist)
 
         return graph
