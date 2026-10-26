@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from unittest import result
 
 import pefile
 
@@ -68,13 +69,18 @@ def check(condition: bool, message: str) -> None:
     print(f"[PASS] {message}")
 
 
-def check_equal(actual, expected, message: str) -> None:
-    if actual != expected:
-        raise AssertionError(
-            f"{message}: expected {expected!r}, got {actual!r}"
-        )
+def check_equal(actual, expected, message: str, hex_value: bool = False) -> None:
+    if hex_value:
+        actual_display = f"0x{actual:X}"
+        expected_display = f"0x{expected:X}"
+    else:
+        actual_display = repr(actual)
+        expected_display = repr(expected)
 
-    print(f"[PASS] {message}: {actual!r}")
+    if actual != expected:
+        raise AssertionError(f"{message}: expected {expected_display}, got {actual_display}")
+
+    print(f"[PASS] {message}: {actual_display}")
 
 
 # ----------------------------------------------------------
@@ -84,29 +90,10 @@ def check_equal(actual, expected, message: str) -> None:
 def test_hyperion_recovery(result, expected: dict) -> None:
     print("\n=== TEST 1: HYPERION RUNTIME RECOVERY ===")
 
-    check_equal(
-        result.encrypted_entry_rva,
-        expected["encrypted_entry_rva"],
-        "Encrypted entry RVA",
-    )
-
-    check_equal(
-        result.allocation.size,
-        expected["allocation_size"],
-        "Hyperion allocation size",
-    )
-
-    check_equal(
-        result.oep_rva,
-        expected["oep_rva"],
-        "Recovered OEP RVA",
-    )
-
-    check_equal(
-        result.oep_va,
-        result.recovered_image_base + result.oep_rva,
-        "Recovered OEP VA",
-    )
+    check_equal(result.encrypted_entry_rva, expected["encrypted_entry_rva"], "Encrypted entry RVA", hex_value=True)
+    check_equal(result.allocation.size, expected["allocation_size"], "Hyperion allocation size", hex_value=True)
+    check_equal(result.oep_rva, expected["oep_rva"], "Recovered OEP RVA", hex_value=True)
+    check_equal(result.oep_va, result.recovered_image_base + result.oep_rva, "Recovered OEP VA", hex_value=True)
 
     check(
         result.recovered_image_size > 0,
@@ -143,11 +130,7 @@ def test_oep_synchronization(debugger, result) -> None:
 
     rip = debugger.get_register("rip")
 
-    check_equal(
-        rip,
-        result.oep_va,
-        "CDB remains paused at recovered OEP",
-    )
+    check_equal(rip, result.oep_va, "CDB remains paused at recovered OEP", hex_value=True)
 
     check(
         result.recovered_image_base <= rip
@@ -173,11 +156,7 @@ def test_iat_discovery(result) -> None:
         "IAT size identified",
     )
 
-    check_equal(
-        result.iat_rva,
-        result.iat_start_va - result.recovered_image_base,
-        "IAT RVA calculation",
-    )
+    check_equal(result.iat_rva, result.iat_start_va - result.recovered_image_base, "IAT RVA calculation", hex_value=True)
 
     check(
         result.iat_valid_thunks > 0,
@@ -230,17 +209,8 @@ def test_iat_candidates(result) -> None:
             f"invalid={candidate.invalid_total}"
         )
 
-    check_equal(
-        result.iat_start_va,
-        analysis.selected.start_va,
-        "Selected IAT start matches result",
-    )
-
-    check_equal(
-        result.iat_size,
-        analysis.selected.size,
-        "Selected IAT size matches result",
-    )
+    check_equal(result.iat_start_va, analysis.selected.start_va, "Selected IAT start matches result", hex_value=True)
+    check_equal(result.iat_size, analysis.selected.size, "Selected IAT size matches result", hex_value=True)
 
 
 # ----------------------------------------------------------
@@ -293,6 +263,7 @@ def test_memory_dump(result) -> None:
         dump_path.stat().st_size,
         result.recovered_image_size,
         "Memory dump size matches SizeOfImage",
+        hex_value=True,
     )
 
     with dump_path.open("rb") as file:
@@ -334,17 +305,8 @@ def test_pe_reconstruction(result) -> None:
     pe = pefile.PE(str(reconstructed_path))
 
     try:
-        check_equal(
-            pe.OPTIONAL_HEADER.Magic,
-            0x20B,
-            "Reconstructed executable is PE32+",
-        )
-
-        check_equal(
-            pe.OPTIONAL_HEADER.AddressOfEntryPoint,
-            result.oep_rva,
-            "Reconstructed PE entry RVA",
-        )
+        check_equal(pe.OPTIONAL_HEADER.Magic, 0x20B, "Reconstructed executable is PE32+", hex_value=True)
+        check_equal(pe.OPTIONAL_HEADER.AddressOfEntryPoint, result.oep_rva, "Reconstructed PE entry RVA", hex_value=True)
 
         check(
             pe.FILE_HEADER.NumberOfSections > 0,
