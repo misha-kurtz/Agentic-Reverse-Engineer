@@ -38,7 +38,9 @@ def load_pe(path, label):
     print("[INFO] Parsing import directory...", flush=True)
     start = time.perf_counter()
 
-    pe.parse_data_directories(directories=["IMAGE_DIRECTORY_ENTRY_IMPORT"])
+    pe.parse_data_directories(
+        directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]]
+    )
 
     print(f"[PASS] Import directory parsed in {time.perf_counter() - start:.3f}s", flush=True)
 
