@@ -22,6 +22,14 @@ class ControlFlowGraph:
     truncated: bool = False
     pending: set[int] = field(default_factory=set)
 
+@dataclass(frozen=True)
+class DisassemblyResult:
+    instructions: tuple[Instruction, ...]
+    unresolved: frozenset[int]
+    decode_errors: dict[int, str]
+    pending: frozenset[int]
+    truncated: bool
+
 def classify_control_flow(instruction: Instruction) -> ControlFlowInfo:
     mnemonic = instruction.mnemonic.lower()
     next_va = instruction.address + instruction.size
@@ -33,7 +41,7 @@ def classify_control_flow(instruction: Instruction) -> ControlFlowInfo:
     if mnemonic == "jmp":
         return ControlFlowInfo(instruction.address, None, target, "unconditional_jump")
 
-    if mnemonic.startswith("j") or mnemonic in ("loop", "loope", "loopne", "jrcxz"):
+    if mnemonic.startswith("j") or mnemonic.startswith("loop"):
         return ControlFlowInfo(instruction.address, next_va, target, "conditional_jump")
 
     if mnemonic == "call":
@@ -74,6 +82,20 @@ def resolve_branch_target(instruction: Instruction) -> int | None:
         return address + 2 + displacement
 
     return None
+
+def collect_cfg_instructions(graph: ControlFlowGraph) -> DisassemblyResult:
+    instructions = tuple(
+        graph.instructions[address]
+        for address in sorted(graph.instructions)
+    )
+
+    return DisassemblyResult(
+        instructions=instructions,
+        unresolved=frozenset(graph.unresolved),
+        decode_errors=dict(graph.decode_errors),
+        pending=frozenset(graph.pending),
+        truncated=graph.truncated,
+    )
 
 class ControlFlowAnalyzer:
     def __init__(self, debugger: CdbDebugger, max_instructions: int = 1000):
@@ -157,3 +179,5 @@ class ControlFlowAnalyzer:
             graph.pending.update(worklist)
 
         return graph
+
+

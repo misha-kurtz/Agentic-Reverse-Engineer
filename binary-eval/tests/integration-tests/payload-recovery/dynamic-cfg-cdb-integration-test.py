@@ -1,3 +1,7 @@
+'''
+Dynamic CFG Integration Test with ConsoleDbg and Test Executable cfg-test.exe
+'''
+
 import re
 import sys
 from pathlib import Path

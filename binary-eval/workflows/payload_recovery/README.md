@@ -1,5 +1,24 @@
 # Payload Recovery
 
+``` bash
+Payload Recovery
+│
+├── UPX
+│   └── runtime_unpack.py
+│
+├── Hyperion
+│   └── runtime_decrypt.py
+│
+└── Shared Recovery Components
+    ├── debugger.py
+    ├── memory_dump.py
+    ├── iat.py
+    ├── import_resolver.py
+    ├── import_rebuilder.py
+    ├── iat_patcher.py
+    └── reconstruction.py
+```
+
 ### Runtime Unpack UPX-packed Samples
 
 ``` bash

@@ -12,17 +12,15 @@ Tests:
     8. Compare the recovered OEP against known sample values.
 
 Run:
-    python test_runtime_decrypt.py
+    python hyperion-runtime-decrypt.py
 '''
 
 from pathlib import Path
 from dataclasses import fields
 
 from runners.debugger import CdbDebugger
-from workflows.payload_recovery.runtime_decrypt import (
-    RuntimeDecryptor,
-    RuntimeDecryptError,
-)
+from runners.dynamic_cfg import ControlFlowAnalyzer, collect_cfg_instructions
+from workflows.payload_recovery.runtime_decrypt import (RuntimeDecryptor,RuntimeDecryptError)
 
 
 # --------------------------------------------------------------
@@ -211,6 +209,46 @@ def validate_result(result, sample: dict) -> bool:
         print(f"[{status}] {name}")
 
     return all(checks.values())
+
+def compare_cfg_with_manual(debugger, scan_start, scan_end, manual_addresses=None):
+    print_section("TARGET CFG COMPARISON")
+
+    analyzer = ControlFlowAnalyzer(debugger, max_instructions=1000)
+    graph = analyzer.analyze(scan_start, scan_start, scan_end)
+    result = collect_cfg_instructions(graph)
+
+    decoded = {instruction.address for instruction in result.instructions}
+    manual = set(manual_addresses or [])
+
+    print(f"Entry:                0x{graph.entry_va:X}")
+    print(f"Analysis start:       0x{scan_start:X}")
+    print(f"Analysis end:         0x{scan_end:X}")
+    print(f"Decoded instructions: {len(decoded)}")
+    print(f"Unresolved:           {len(result.unresolved)}")
+    print(f"Decode errors:        {len(result.decode_errors)}")
+    print(f"Pending:              {len(result.pending)}")
+    print(f"Truncated:            {result.truncated}")
+
+    print("\nDecoded instructions:")
+
+    for instruction in result.instructions:
+        print(f"0x{instruction.address:X}: {instruction.text}")
+
+    if manual:
+        print("\nManual comparison:")
+        print(f"Matching addresses: {len(decoded & manual)}")
+        print(f"Missing addresses:  {len(manual - decoded)}")
+
+        for address in sorted(manual - decoded):
+            print(f"[MISSING] 0x{address:X}")
+
+    if result.decode_errors:
+        print("\nDecode errors:")
+
+        for address, error in sorted(result.decode_errors.items()):
+            print(f"0x{address:X}: {error}")
+
+    return graph
 
 
 # --------------------------------------------------------------

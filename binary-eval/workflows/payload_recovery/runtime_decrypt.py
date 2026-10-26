@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import pefile
 
 from runners.debugger import CdbDebugger, DebuggerError, ModuleInfo
+from runners.dynamic_cfg import ControlFlowAnalyzer, classify_control_flow
 
 '''
 Hyperion Runtime Decryption Workflow
@@ -1121,266 +1122,297 @@ class RuntimeDecryptor:
         copy: CopyInfo,
         max_scan_bytes: int = 0x600) -> int:
         '''
-        Discover the Hyperion loader's accepted-transformation
-        branch without using a hardcoded instruction address.
+        Discover the Hyperion loader's successful-decryption
+        branch using the existing ControlFlowAnalyzer.
 
-        Start immediately after the initial ciphertext
-        REP MOVSQ operation.
+        Starting immediately after the initial ciphertext
+        backup operation, construct a bounded CFG and identify
+        a structure containing:
 
-        Search a bounded instruction region for a retry-loop
-        structure containing:
+            1. A conditional validation branch.
+            2. A failure path containing REP MOVSQ restoration.
+            3. A backward unconditional retry jump.
+            4. An acceptance path that bypasses restoration.
 
-            1. A candidate REP MOVSQ restoration operation.
-            2. A conditional branch that skips restoration.
-            3. A backward unconditional jump that retries.
+        The acceptance destination is returned as the
+        decryption-success breakpoint.
 
-        The conditional branch destination is treated as
-        the candidate acceptance breakpoint.
-
-        This method recognizes the control-flow structure
-        observed in the current Hyperion loader family.
-
-        It does not perform full control-flow or register
-        data-flow analysis.
-
-        Return:
-
-            Runtime address of the acceptance branch target.
-
-        Raise RuntimeDecryptError if discovery is ambiguous
-        or unsuccessful.
+        This method performs structural CFG analysis only.
+        Recovered PE validation occurs after the debugger
+        reaches the selected breakpoint.
         '''
 
         # --------------------------------------------------
-        # Step 1: Determine the scan starting address
+        # Step 1: Identify CFG analysis bounds
         # --------------------------------------------------
 
         initial_copy = self.debugger.disassemble_one(copy.instruction_va)
 
-        scan_start = (copy.instruction_va + len(initial_copy.raw_bytes))
-
+        scan_start = copy.instruction_va + initial_copy.size
         scan_end = scan_start + max_scan_bytes
 
-        print(f"[decrypt-discovery] Initial copy VA: 0x{copy.instruction_va:X}")
-        print(f"[decrypt-discovery] Scan size: 0x{max_scan_bytes:X}")
-
-        print("\n[decrypt-discovery] Analyzing loader control flow.")
-
-        print(f"[decrypt-discovery] Scan start: " f"0x{scan_start:X}")
-
-        print(f"[decrypt-discovery] Scan end: " f"0x{scan_end:X}")
-
-        print(f"[decrypt-discovery] Original source: " f"0x{copy.source_va:X}")
-
-        print(f"[decrypt-discovery] Temporary allocation: " f"0x{allocation.base:X}")
+        print("\n[decrypt-discovery] Building loader CFG.")
+        print(f"[decrypt-discovery] Initial copy: 0x{copy.instruction_va:X}")
+        print(f"[decrypt-discovery] CFG entry: 0x{scan_start:X}")
+        print(f"[decrypt-discovery] CFG end: 0x{scan_end:X}")
+        print(f"[decrypt-discovery] Source: 0x{copy.source_va:X}")
+        print(f"[decrypt-discovery] Temporary allocation: 0x{allocation.base:X}")
 
         # --------------------------------------------------
-        # Step 2: Disassemble bounded instruction region
+        # Step 2: Build control-flow graph
         # --------------------------------------------------
 
-        instructions = []
-        current_va = scan_start
+        analyzer = ControlFlowAnalyzer(
+            debugger=self.debugger,
+            max_instructions=1000
+        )
 
-        while current_va < scan_end:
-            try:
-                instruction = self.debugger.disassemble_one(current_va)
-            except DebuggerError as exc:
-                raise RuntimeDecryptError(
-                    f"Loader disassembly stopped at 0x{current_va:X}. "
-                    f"Decoded {len(instructions)} instructions over "
-                    f"0x{current_va - scan_start:X} bytes. "
-                    f"Scan bounds: 0x{scan_start:X}-0x{scan_end:X}. "
-                    f"Debugger error: {exc}"
-                ) from exc
+        graph = analyzer.analyze(
+            entry_va=scan_start,
+            start_va=scan_start,
+            end_va=scan_end
+        )
 
-            raw_bytes = instruction.raw_bytes
+        print(f"[decrypt-discovery] Instructions: {len(graph.instructions)}")
+        print(f"[decrypt-discovery] Unresolved: {len(graph.unresolved)}")
+        print(f"[decrypt-discovery] Decode errors: {len(graph.decode_errors)}")
+        print(f"[decrypt-discovery] Truncated: {graph.truncated}")
 
-            if not raw_bytes:
-                raise RuntimeDecryptError(
-                    f"Empty instruction at 0x{current_va:X}."
-                )
+        if not graph.instructions:
+            raise RuntimeDecryptError("CFG analysis returned no instructions.")
 
-            instructions.append({
-                "va": current_va,
-                "end": current_va + len(raw_bytes),
-                "raw": raw_bytes,
-                "mnemonic": instruction.mnemonic.lower(),
-                "operands": instruction.operands.lower(),
-            })
-
-            current_va += len(raw_bytes)
-
-        print(f"[decrypt-discovery] Decoded {len(instructions)} instructions.")
-        print(f"[decrypt-discovery] Last decoded VA: 0x{instructions[-1]['va']:X}" if instructions else
-            "[decrypt-discovery] No instructions decoded.")
+        if graph.truncated:
+            raise RuntimeDecryptError(
+                "CFG analysis exceeded its instruction budget. "
+                "Cannot reliably identify the acceptance branch."
+            )
 
         # --------------------------------------------------
-        # Step 3: Identify candidate restoration operations
+        # Step 3: Identify ciphertext restoration operations
         # --------------------------------------------------
 
         restoration_candidates = []
 
-        for index, instruction in enumerate(instructions):
+        for address, instruction in graph.instructions.items():
+            raw = instruction.raw_bytes
 
-            raw_bytes = instruction["raw"]
-
-            is_rep_movsq = (raw_bytes.startswith(b"\xF3\x48\xA5") or raw_bytes.startswith(b"\x48\xF3\xA5"))
+            is_rep_movsq = (
+                raw.startswith(b"\xF3\x48\xA5")
+                or raw.startswith(b"\x48\xF3\xA5")
+            )
 
             if not is_rep_movsq:
                 continue
 
-            # Exclude the initial ciphertext backup copy.
-            if instruction["va"] == copy.instruction_va:
+            if address == copy.instruction_va:
                 continue
 
-            restoration_candidates.append((index, instruction))
+            restoration_candidates.append(address)
 
         if not restoration_candidates:
-
             raise RuntimeDecryptError(
-                "No candidate ciphertext-restoration "
-                "REP MOVSQ instruction was found."
+                "No ciphertext-restoration REP MOVSQ "
+                "was discovered in the loader CFG."
             )
 
-        print("[decrypt-discovery] Candidate restoration " f"instructions: {len(restoration_candidates)}")
+        print(f"[decrypt-discovery] Restoration candidates: {len(restoration_candidates)}")
 
         # --------------------------------------------------
-        # Step 4: Analyze surrounding control flow
+        # Step 4: Identify backward retry jumps
+        # --------------------------------------------------
+
+        retry_candidates = []
+
+        for address, instruction in graph.instructions.items():
+            flow = classify_control_flow(instruction)
+
+            if flow.kind != "unconditional_jump":
+                continue
+
+            target = flow.branch_target
+
+            if target is None:
+                continue
+
+            if target >= address:
+                continue
+
+            if target not in graph.instructions:
+                continue
+
+            retry_candidates.append({
+                "jump_va": address,
+                "target_va": target
+            })
+
+        print(f"[decrypt-discovery] Backward jumps: {len(retry_candidates)}")
+
+        # --------------------------------------------------
+        # Step 5: Graph reachability helper
+        # --------------------------------------------------
+
+        def is_reachable(start: int, destination: int, blocked: set[int] | None = None) -> bool:
+            '''
+            Determine whether destination is reachable from
+            start using decoded CFG edges.
+
+            Optional blocked addresses prevent traversal
+            through competing paths.
+            '''
+
+            blocked = blocked or set()
+            pending = [start]
+            visited = set()
+
+            while pending:
+                address = pending.pop()
+
+                if address in blocked or address in visited:
+                    continue
+
+                if address == destination:
+                    return True
+
+                visited.add(address)
+
+                for successor in graph.edges.get(address, set()):
+                    if successor not in visited and successor not in blocked:
+                        pending.append(successor)
+
+            return False
+
+        # --------------------------------------------------
+        # Step 6: Identify validation-branch candidates
         # --------------------------------------------------
 
         acceptance_candidates = []
 
-        for restore_index, restore in restoration_candidates:
+        for branch_va, instruction in graph.instructions.items():
+            flow = classify_control_flow(instruction)
 
-            restore_va = restore["va"]
-
-            print("[decrypt-discovery] Examining restoration " f"candidate at 0x{restore_va:X}")
-
-            # --------------------------------------------------
-            # Find a backward retry jump after restoration
-            # --------------------------------------------------
-
-            retry_jumps = []
-
-            for instruction in instructions[restore_index + 1:]:
-
-                decoded = self._relative_branch_target(instruction["va"], instruction["raw"])
-
-                if decoded is None:
-                    continue
-
-                target, branch_type = decoded
-
-                if branch_type != "jmp":
-                    continue
-
-                if target >= instruction["va"]:
-                    continue
-
-                # The retry destination must precede
-                # the restoration operation.
-                if target >= restore_va:
-                    continue
-
-                retry_jumps.append({"va": instruction["va"], "end": instruction["end"], "target": target, })
-
-            if not retry_jumps:
+            if flow.kind != "conditional_jump":
                 continue
 
-            # --------------------------------------------------
-            # Find a conditional branch before restoration
-            # whose target skips the restoration operation.
-            # --------------------------------------------------
+            if flow.branch_target is None or flow.fallthrough is None:
+                continue
 
-            for instruction in instructions[:restore_index]:
+            branch_successors = graph.edges.get(branch_va, set())
 
-                decoded = self._relative_branch_target(instruction["va"], instruction["raw"])
+            if len(branch_successors) != 2:
+                continue
 
-                if decoded is None:
+            for restoration_va in restoration_candidates:
+
+                # The validation branch must precede restoration.
+                if branch_va >= restoration_va:
                     continue
 
-                target, branch_type = decoded
+                # The failure path must reach restoration.
+                failure_successors = [
+                    successor
+                    for successor in branch_successors
+                    if is_reachable(successor, restoration_va)
+                ]
 
-                if branch_type != "conditional":
+                if len(failure_successors) != 1:
                     continue
 
-                # Accepted path must bypass restoration.
-                if target <= restore_va:
+                failure_va = failure_successors[0]
+
+                # The other successor is the acceptance candidate.
+                acceptance_va = next(
+                    successor
+                    for successor in branch_successors
+                    if successor != failure_va
+                )
+
+                # The acceptance path must bypass restoration.
+                if acceptance_va <= restoration_va:
                     continue
 
-                for retry in retry_jumps:
+                if acceptance_va not in graph.instructions:
+                    continue
 
-                    # The retry jump should occur after
-                    # restoration and before the accepted path.
-                    if not (restore_va < retry["va"] < target):
+                # The failure path must contain a backward retry.
+                for retry in retry_candidates:
+                    retry_va = retry["jump_va"]
+                    retry_target = retry["target_va"]
+
+                    if retry_va <= restoration_va:
                         continue
 
-                    # The backward jump must return to code
-                    # before the conditional branch.
-                    if retry["target"] >= instruction["va"]:
+                    if retry_va >= acceptance_va:
                         continue
 
-                    # Avoid selecting a branch that jumps
-                    # outside the analyzed instruction region.
-                    if not (scan_start <= target < scan_end):
+                    if retry_target >= branch_va:
                         continue
 
-                    acceptance_candidates.append(
-                        {
-                            "acceptance_va": target,
-                            "branch_va": instruction["va"],
-                            "restoration_va": restore_va,
-                            "retry_va": retry["va"],
-                            "retry_target": retry["target"],
-                        }
-                    )
+                    if not is_reachable(
+                        restoration_va,
+                        retry_va,
+                        blocked={acceptance_va}
+                    ):
+                        continue
+
+                    # Retry should return to code that can
+                    # reach the validation branch again.
+                    if not is_reachable(
+                        retry_target,
+                        branch_va,
+                        blocked={acceptance_va}
+                    ):
+                        continue
+
+                    acceptance_candidates.append({
+                        "acceptance_va": acceptance_va,
+                        "branch_va": branch_va,
+                        "failure_va": failure_va,
+                        "restoration_va": restoration_va,
+                        "retry_va": retry_va,
+                        "retry_target": retry_target
+                    })
 
         # --------------------------------------------------
-        # Step 5: Deduplicate acceptance destinations
+        # Step 7: Deduplicate candidates
         # --------------------------------------------------
 
         unique_candidates = {}
 
         for candidate in acceptance_candidates:
-
-            acceptance_va = candidate["acceptance_va"]
-
-            unique_candidates.setdefault(acceptance_va, candidate)
+            unique_candidates.setdefault(candidate["acceptance_va"], candidate)
 
         candidates = list(unique_candidates.values())
 
         # --------------------------------------------------
-        # Step 6: Require an unambiguous result
+        # Step 8: Require an unambiguous acceptance path
         # --------------------------------------------------
 
         if not candidates:
-
             raise RuntimeDecryptError(
-                "Unable to discover a loader acceptance "
-                "branch from the restoration/retry structure."
+                "Unable to discover a successful-decryption "
+                "branch from the loader CFG."
             )
 
         if len(candidates) != 1:
+            addresses = ", ".join(
+                f"0x{candidate['acceptance_va']:X}"
+                for candidate in candidates
+            )
 
-            addresses = ", ".join(f"0x{candidate['acceptance_va']:X}" for candidate in candidates)
-
-            raise RuntimeDecryptError("Ambiguous loader acceptance candidates: " + addresses)
+            raise RuntimeDecryptError(
+                "Ambiguous decryption acceptance candidates: " + addresses
+            )
 
         candidate = candidates[0]
-
         acceptance_va = candidate["acceptance_va"]
 
-        print("\n[decrypt-discovery] Loader control-flow " "candidate identified.")
-
-        print(f"  Conditional branch: " f"0x{candidate['branch_va']:X}")
-
-        print(f"  Restoration operation: " f"0x{candidate['restoration_va']:X}")
-
-        print(f"  Retry jump: " f"0x{candidate['retry_va']:X}")
-
-        print(f"  Retry destination: " f"0x{candidate['retry_target']:X}")
-
-        print(f"  Acceptance destination: " f"0x{acceptance_va:X}")
+        print("\n[decrypt-discovery] Acceptance candidate identified.")
+        print(f"  Validation branch: 0x{candidate['branch_va']:X}")
+        print(f"  Failure successor: 0x{candidate['failure_va']:X}")
+        print(f"  Restoration: 0x{candidate['restoration_va']:X}")
+        print(f"  Retry jump: 0x{candidate['retry_va']:X}")
+        print(f"  Retry destination: 0x{candidate['retry_target']:X}")
+        print(f"  Acceptance destination: 0x{acceptance_va:X}")
 
         return acceptance_va
 
