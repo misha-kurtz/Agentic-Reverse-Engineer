@@ -7,16 +7,12 @@ from pathlib import Path
 
 import pefile
 
-from runners.debugger import (
-    CdbDebugger,
-    DebuggerError,
-    DirectJump,
-    Instruction,
-    ModuleInfo
-)
+from runners.debugger import CdbDebugger, DebuggerError, DirectJump, Instruction, ModuleInfo
+from runners.iat import IATAnalysisResult, Thunk
+from runners.import_resolver import ResolvedImport
+from runners.post_oep_recovery import PostOEPRecovery
+from runners.reconstruction import ReconstructionResult
 
-from runners.iat import IATAnalyzer, Thunk
-from runners.memory_dump import MemoryDumper
 
 class RuntimeUnpackError(RuntimeError):
     pass
@@ -27,23 +23,22 @@ class SectionRange:
     name: str
     rva: int
     virtual_size: int
+    characteristics: int
     start_va: int
     end_va: int
 
     def contains(self, address: int) -> bool:
-        return (
-            self.start_va
-            <= address
-            < self.end_va
-        )
+        return self.start_va <= address < self.end_va
+
+    @property
+    def executable(self) -> bool:
+        return bool(self.characteristics & 0x20000000)
 
 
 @dataclass(frozen=True)
 class UnpackResult:
     input_path: Path
-
     pid: int
-
     image_base: int
 
     packed_entry_va: int
@@ -63,60 +58,36 @@ class UnpackResult:
 
     iat_start_va: int
     iat_size: int
-
     iat_valid_thunks: int
     iat_invalid_thunks: int
 
-    dump_path: Path
-
     iat_thunks: tuple[Thunk, ...]
+    iat_analysis: IATAnalysisResult
+    resolved_imports: tuple[ResolvedImport, ...]
     loaded_modules: tuple[ModuleInfo, ...]
+
+    dump_path: Path
+    reconstructed_path: Path | None
+    reconstruction: ReconstructionResult | None
 
     @property
     def iat_rva(self) -> int:
         return self.iat_start_va - self.image_base
 
-@dataclass(frozen=True)
-class SectionRange:
-    name: str
-    rva: int
-    virtual_size: int
-    characteristics: int
-    start_va: int
-    end_va: int
-
-    def contains(
-        self,
-        address: int,
-    ) -> bool:
-
-        return (
-            self.start_va
-            <= address
-            < self.end_va
-        )
-
-    @property
-    def executable(self) -> bool:
-        return bool(
-            self.characteristics
-            & 0x20000000
-        )
-
 
 class RuntimeUnpacker:
-    """
+    '''
     Deterministic runtime UPX recovery.
 
-    Current invariant:
-
+    Workflow:
         packed EP
             -> push rbx
             -> watch saved RBX stack slot
             -> matching pop rbx
             -> direct JMP from stub into reconstructed section
             -> OEP
-    """
+            -> shared post-OEP recovery
+    '''
 
     def __init__(
         self,
@@ -125,432 +96,229 @@ class RuntimeUnpacker:
         max_post_restore_instructions: int = 16,
     ):
         self.debugger = debugger
-
-        self.max_stack_watch_events = (
-            max_stack_watch_events
-        )
-
-        self.max_post_restore_instructions = (
-            max_post_restore_instructions
-        )
+        self.max_stack_watch_events = max_stack_watch_events
+        self.max_post_restore_instructions = max_post_restore_instructions
 
     # ------------------------------------------------------------------
     # Public workflow
     # ------------------------------------------------------------------
 
-    def run(
-        self,
-        executable: Path | str,
-    ) -> UnpackResult:
-
+    def run(self, executable: Path | str) -> UnpackResult:
         executable = Path(executable)
+        pe_info = self._parse_pe(executable)
 
-        pe_info = self._parse_pe(
-            executable
-        )
-
-        self.debugger.launch(
-            executable
-        )
+        self.debugger.launch(executable)
 
         try:
-            module = self.debugger.get_module(
-                executable.name
-            )
-
+            module = self.debugger.get_module(executable.name)
             pid = self.debugger.get_process_id()
 
             image_base = module.base
             image_end = module.end
 
-            packed_entry_rva = (
-                pe_info["entry_rva"]
-            )
+            packed_entry_rva = pe_info['entry_rva']
+            packed_entry_va = image_base + packed_entry_rva
 
-            packed_entry_va = (
-                image_base
-                + packed_entry_rva
-            )
-
-            sections = self._build_runtime_sections(
-                pe_info=pe_info,
-                image_base=image_base,
-            )
-
-            stub = self._find_section_containing_va(
-                sections=sections,
-                address=packed_entry_va,
-            )
+            sections = self._build_runtime_sections(pe_info, image_base)
+            stub = self._find_section_containing_va(sections, packed_entry_va)
 
             if not stub.executable:
-                raise RuntimeUnpackError(
-                    "Packed entry point is not located "
-                    "inside an executable section"
-                )
+                raise RuntimeUnpackError('Packed entry point is not located inside an executable section')
 
-            #
             # 1. Run to packed entry point.
-            #
-            self.debugger.set_breakpoint(
-                packed_entry_va
-            )
 
+            self.debugger.set_breakpoint(packed_entry_va)
             self.debugger.continue_execution()
 
-            rip = self.debugger.get_register(
-                "rip"
-            )
+            rip = self.debugger.get_register('rip')
 
             if rip != packed_entry_va:
                 raise RuntimeUnpackError(
-                    "Did not stop at packed entry point: "
-                    f"expected 0x{packed_entry_va:x}, "
-                    f"got 0x{rip:x}"
+                    f'Did not stop at packed entry point: '
+                    f'expected 0x{packed_entry_va:X}, got 0x{rip:X}'
                 )
 
-            #
-            # 2. Verify packed EP begins with:
-            #
-            #       push rbx
-            #
-            entry_instruction = (
-                self.debugger.disassemble_one(
-                    packed_entry_va
-                )
-            )
+            # 2. Verify packed EP begins with push rbx.
 
-            self._require_push_rbx(
-                entry_instruction
-            )
+            entry_instruction = self.debugger.disassemble_one(packed_entry_va)
+            self._require_push_rbx(entry_instruction)
 
-            #
             # 3. Record original RSP/RBX.
-            #
-            registers = (
-                self.debugger.get_registers(
-                    "rsp",
-                    "rbx",
-                )
-            )
 
-            entry_rsp = registers["rsp"]
-            entry_rbx = registers["rbx"]
+            registers = self.debugger.get_registers('rsp', 'rbx')
+            entry_rsp = registers['rsp']
+            entry_rbx = registers['rbx']
 
-            #
             # The software entry breakpoint is no longer needed.
-            #
+
             self.debugger.clear_all_breakpoints()
 
-            #
             # 4. Execute push rbx.
-            #
+
             self.debugger.step_into()
 
-            new_rsp = self.debugger.get_register(
-                "rsp"
-            )
-
+            new_rsp = self.debugger.get_register('rsp')
             expected_rsp = entry_rsp - 8
 
             if new_rsp != expected_rsp:
                 raise RuntimeUnpackError(
-                    "push rbx did not produce expected RSP: "
-                    f"expected 0x{expected_rsp:x}, "
-                    f"got 0x{new_rsp:x}"
+                    f'push rbx did not produce expected RSP: '
+                    f'expected 0x{expected_rsp:X}, got 0x{new_rsp:X}'
                 )
 
             saved_rbx_slot = new_rsp
 
-            #
-            # Verify the qword at [new RSP] contains the
-            # RBX value that was pushed.
-            #
-            saved_value = self.debugger.read_qword(
-                saved_rbx_slot
-            )
+            # Verify the qword at [new RSP] contains the pushed RBX.
+
+            saved_value = self.debugger.read_qword(saved_rbx_slot)
 
             if saved_value != entry_rbx:
                 raise RuntimeUnpackError(
-                    "Saved RBX stack value does not match "
-                    "entry RBX: "
-                    f"expected 0x{entry_rbx:x}, "
-                    f"got 0x{saved_value:x}"
+                    f'Saved RBX stack value does not match entry RBX: '
+                    f'expected 0x{entry_rbx:X}, got 0x{saved_value:X}'
                 )
 
-            #
-            # 5. Hardware read/write breakpoint over the
-            #    saved RBX qword.
-            #
-            self.debugger.set_access_breakpoint(
-                address=saved_rbx_slot,
-                size=8,
-            )
+            # 5. Hardware read/write breakpoint on saved RBX qword.
 
-            #
-            # 6. Continue until we identify the matching
-            #    outer pop rbx.
-            #
-            restore_rip = (
-                self._wait_for_outer_rbx_restore(
-                    entry_rsp=entry_rsp,
-                    entry_rbx=entry_rbx,
-                )
-            )
+            self.debugger.set_access_breakpoint(address=saved_rbx_slot, size=8)
 
-            #
-            # The saved-RBX hardware watchpoint has served
-            # its purpose. Remove it before continuing
-            # through the rest of the stub.
-            #
+            # 6. Identify matching outer pop rbx.
+
+            restore_rip = self._wait_for_outer_rbx_restore(entry_rsp, entry_rbx)
+
+            # Remove the saved-RBX hardware watchpoint.
+
             self.debugger.clear_all_breakpoints()
 
-            #
-            # We're now stopped immediately AFTER pop rbx.
-            #
-            # RIP points at the next instruction.
-            #
-            # 7. Find the following direct relative JMP
-            #    from the stub into the reconstructed section.
-            #
-            (jump,destination) = self._find_stub_exit_jump(
+            # 7. Locate the direct JMP into the reconstructed section.
+
+            jump, destination = self._find_stub_exit_jump(
                 start_va=restore_rip,
                 stub=stub,
                 sections=sections,
             )
 
-            #
-            # 8. Break directly on the stub-exit JMP and
-            #    continue until that exact instruction.
-            #
-            self.debugger.set_breakpoint(
-                jump.source
-            )
+            # 8. Break directly on the stub-exit JMP.
 
+            self.debugger.set_breakpoint(jump.source)
             self.debugger.continue_execution()
 
-            current_rip = (
-                self.debugger.get_register(
-                    "rip"
-                )
-            )
+            current_rip = self.debugger.get_register('rip')
 
-            #
-            # Temporary diagnostic output.
-            #
-            print(
-                f"[debug] Expected stub-exit JMP: "
-                f"0x{jump.source:x}"
-            )
+            print(f'[debug] Expected stub-exit JMP: 0x{jump.source:X}')
+            print(f'[debug] Current RIP after continue: 0x{current_rip:X}')
 
-            print(
-                f"[debug] Current RIP after continue: "
-                f"0x{current_rip:x}"
-            )
-
-            for instruction in (
-                self.debugger.iter_instructions(
-                    current_rip,
-                    max_instructions=8,
-                )
-            ):
-                print(
-                    f"[debug] {instruction.text}"
-                )
+            for instruction in self.debugger.iter_instructions(current_rip, max_instructions=8):
+                print(f'[debug] {instruction.text}')
 
             if current_rip != jump.source:
                 raise RuntimeUnpackError(
-                    "Did not stop at stub exit JMP: "
-                    f"expected 0x{jump.source:x}, "
-                    f"got 0x{current_rip:x}"
+                    f'Did not stop at stub exit JMP: '
+                    f'expected 0x{jump.source:X}, got 0x{current_rip:X}'
                 )
 
-            #
-            # 9. Validate the live instruction at the
-            #    breakpoint.
-            #
-            live_jump_instruction = (
-                self.debugger.disassemble_one(
-                    current_rip
-                )
-            )
+            # 9. Validate the live JMP instruction.
 
-            live_jump = (
-                self.debugger.resolve_direct_jump(
-                    live_jump_instruction
-                )
-            )
+            live_jump_instruction = self.debugger.disassemble_one(current_rip)
+            live_jump = self.debugger.resolve_direct_jump(live_jump_instruction)
 
             if live_jump is None:
-                raise RuntimeUnpackError(
-                    f"Instruction at 0x{current_rip:x} "
-                    "is not a direct JMP"
-                )
+                raise RuntimeUnpackError(f'Instruction at 0x{current_rip:X} is not a direct JMP')
 
             if live_jump.target != jump.target:
                 raise RuntimeUnpackError(
-                    "JMP target changed unexpectedly: "
-                    f"expected 0x{jump.target:x}, "
-                    f"got 0x{live_jump.target:x}"
+                    f'JMP target changed unexpectedly: '
+                    f'expected 0x{jump.target:X}, got 0x{live_jump.target:X}'
                 )
 
-            #
             # 10. Execute exactly the stub-exit JMP.
-            #
+
             self.debugger.step_into()
+            oep_va = self.debugger.get_register('rip')
 
-            oep_va = self.debugger.get_register(
-                "rip"
-            )
+            # 11. Verify the debugger reached the expected OEP.
 
-            #
-            # 11. Verify that execution landed at the
-            #     expected OEP candidate.
-            #
             if oep_va != jump.target:
                 raise RuntimeUnpackError(
-                    "JMP did not land on expected OEP: "
-                    f"expected 0x{jump.target:x}, "
-                    f"got 0x{oep_va:x}"
+                    f'JMP did not land on expected OEP: '
+                    f'expected 0x{jump.target:X}, got 0x{oep_va:X}'
                 )
 
-            if not destination.contains(
-                oep_va
-            ):
+            if not destination.contains(oep_va):
                 raise RuntimeUnpackError(
-                    "OEP does not lie inside reconstructed "
-                    f"section {destination.name}: "
-                    f"0x{oep_va:x}"
+                    f'OEP does not lie inside reconstructed section '
+                    f'{destination.name}: 0x{oep_va:X}'
                 )
 
-            #
-            # RVA is relative to the loaded image base,
-            # NOT the reconstructed section base.
-            #
-            oep_rva = (
-                oep_va
-                - image_base
-            )
+            # Calculate RVAs relative to the loaded image base.
 
-            # Calculate stub exit jump RVA
-            stub_jump_rva = (
-                jump.source
-                - image_base
-            )
+            oep_rva = oep_va - image_base
+            stub_jump_rva = jump.source - image_base
 
-            #
-            # 12. Enumerate all modules currently loaded in the
-            #     debuggee now that execution is paused at the OEP.
-            #
-            loaded_modules = (
-                self.debugger.get_modules()
-            )
+            print(f'[upx] Recovered OEP VA: 0x{oep_va:X}')
+            print(f'[upx] Recovered OEP RVA: 0x{oep_rva:X}')
+            print(f'[upx] Stub-exit JMP VA: 0x{jump.source:X}')
+            print(f'[upx] Stub-exit JMP RVA: 0x{stub_jump_rva:X}')
 
-            #
-            # Temporary diagnostic output.
-            #
-            print("[debug] Loaded modules:")
+                        # ----------------------------------------------------------
+            # 12. Shared post-OEP recovery
+            # ----------------------------------------------------------
 
-            for loaded_module in loaded_modules:
-                print(
-                    f"[debug] "
-                    f"0x{loaded_module.base:X}-"
-                    f"0x{loaded_module.end:X} "
-                    f"{loaded_module.name}"
-                )
+            image_size = image_end - image_base
 
-            #
-            # 13. Create the IAT analyzer using the current
-            #     runtime image range and loaded-module map.
-            #
-            iat_analyzer = IATAnalyzer(
-                debugger=self.debugger,
-                image_start=image_base,
-                image_end=image_end,
-                modules=loaded_modules,
-                pointer_size=8,
-            )
-
-            #
-            # 14. Discover and analyze candidate IAT ranges
-            #     from the live reconstructed image.
-            #
-            iat_result = iat_analyzer.discover_and_analyze()
-            selected_iat = iat_result.selected
-
-            # Temporary diagnostic output while validating autonomous IAT discovery.
-            print()
-            print(iat_analyzer.format_analysis_result(iat_result))
-
-            print()
-            print("[debug] Invalid thunks for selected IAT:")
-            print(
-                iat_analyzer.format_thunks(
-                    selected_iat,
-                    include_valid=False,
-                    include_invalid=True,
-                    include_null=False,
-                )
-            )
-
-            #
-            # 15. Dump the reconstructed main image while the
-            #     debuggee remains paused at the confirmed OEP.
-            #
             dump_dir = Path.cwd() / "dumps"
             dump_dir.mkdir(parents=True, exist_ok=True)
 
-            dump_path = dump_dir / (
-                f"{executable.stem}_memory.bin"
+            dump_path = dump_dir / f"{executable.stem}_memory.bin"
+            reconstructed_path = dump_dir / f"{executable.stem}_reconstructed.exe"
+
+            print("\n=== UPX POST-OEP RECOVERY ===")
+            print(f"[upx] Image base: 0x{image_base:X}")
+            print(f"[upx] Image size: 0x{image_size:X}")
+            print(f"[upx] OEP VA: 0x{oep_va:X}")
+            print(f"[upx] OEP RVA: 0x{oep_rva:X}")
+
+            post_oep = PostOEPRecovery(self.debugger)
+
+            recovery = post_oep.run(
+                image_base=image_base,
+                image_size=image_size,
+                oep_rva=oep_rva,
+                dump_path=dump_path,
+                reconstructed_path=reconstructed_path,
+                packed_entry_rva=packed_entry_rva,
+                stub_jump_rva=stub_jump_rva,
             )
 
-            memory_dumper = MemoryDumper(
-                debugger=self.debugger,
-            )
+            # ----------------------------------------------------------
+            # 13. Return complete UPX recovery metadata
+            # ----------------------------------------------------------
 
-            memory_dump = memory_dumper.dump_image(
-                output_path=dump_path,
-                start_va=image_base,
-                end_va=image_end,
-            )
-
-            print()
-            print(f"[debug] Memory dump: {memory_dump.path}")
-            print(f"[debug] Dump size:   0x{memory_dump.size:X}")
-
-            #
-            # Leave CDB paused on the confirmed OEP.
-            #
             return UnpackResult(
                 input_path=executable,
-
                 pid=pid,
                 image_base=image_base,
-
                 packed_entry_va=packed_entry_va,
                 packed_entry_rva=packed_entry_rva,
-
                 entry_rsp=entry_rsp,
                 saved_rbx_slot=saved_rbx_slot,
-
                 stub_jump_va=jump.source,
                 stub_jump_rva=stub_jump_rva,
-
                 oep_va=oep_va,
                 oep_rva=oep_rva,
-
                 source_section=stub.name,
                 destination_section=destination.name,
-
-                iat_start_va=selected_iat.start_va,
-                iat_size=selected_iat.size,
-
-                iat_valid_thunks=selected_iat.valid_external,
-                iat_invalid_thunks=selected_iat.invalid_total,
-
-                dump_path=memory_dump.path,
-
-                iat_thunks=selected_iat.thunks,
-                loaded_modules=tuple(loaded_modules),
+                iat_start_va=recovery.iat_start_va,
+                iat_size=recovery.iat_size,
+                iat_valid_thunks=recovery.iat_valid_thunks,
+                iat_invalid_thunks=recovery.iat_invalid_thunks,
+                iat_thunks=recovery.iat_thunks,
+                iat_analysis=recovery.iat_analysis,
+                resolved_imports=recovery.resolved_imports,
+                loaded_modules=recovery.loaded_modules,
+                dump_path=recovery.dump_path,
+                reconstructed_path=recovery.reconstructed_path,
+                reconstruction=recovery.reconstruction,
             )
 
         except Exception:
@@ -561,53 +329,27 @@ class RuntimeUnpacker:
     # Sentinel restoration
     # ------------------------------------------------------------------
 
-    def _wait_for_outer_rbx_restore(
-        self,
-        entry_rsp: int,
-        entry_rbx: int,
-    ) -> int:
-
-        for _ in range(
-            self.max_stack_watch_events
-        ):
+    def _wait_for_outer_rbx_restore(self, entry_rsp: int, entry_rbx: int) -> int:
+        for _ in range(self.max_stack_watch_events):
             self.debugger.continue_execution()
 
-            rip = self.debugger.get_register(
-                "rip"
-            )
-
-            rsp = self.debugger.get_register(
-                "rsp"
-            )
-
-            rbx = self.debugger.get_register(
-                "rbx"
-            )
+            rip = self.debugger.get_register('rip')
+            rsp = self.debugger.get_register('rsp')
+            rbx = self.debugger.get_register('rbx')
 
             try:
-                previous = (
-                    self.debugger.disassemble_previous(
-                        rip
-                    )
-                )
-
+                previous = self.debugger.disassemble_previous(rip)
             except DebuggerError:
                 previous = None
 
+            # Hardware data breakpoints on x86/x64 fire after
+            # the memory-accessing instruction.
             #
-            # Hardware data breakpoints on x86/x64 fire
-            # after the memory-accessing instruction.
-            #
-            # Therefore, after the matching:
-            #
-            #       pop rbx
-            #
-            # we expect:
-            #
-            #       RIP = next instruction
-            #       RSP = original entry RSP
-            #       RBX = original entry RBX
-            #
+            # After the matching pop rbx:
+            #   RIP = next instruction
+            #   RSP = original entry RSP
+            #   RBX = original entry RBX
+
             if (
                 previous is not None
                 and self._is_pop_rbx(previous)
@@ -616,18 +358,16 @@ class RuntimeUnpacker:
             ):
                 return rip
 
-            #
-            # Some other instruction touched the sentinel.
-            # Keep watching.
-            #
+            # Another instruction accessed the sentinel.
+            # Continue watching.
 
         raise RuntimeUnpackError(
-            "Saved RBX slot was accessed, but no matching "
-            "outer pop rbx was identified"
+            'Saved RBX slot was accessed, but no matching '
+            'outer pop rbx was identified'
         )
 
     # ------------------------------------------------------------------
-    # Locate stub exit JMP
+    # Locate stub-exit JMP
     # ------------------------------------------------------------------
 
     def _find_stub_exit_jump(
@@ -635,84 +375,40 @@ class RuntimeUnpacker:
         start_va: int,
         stub: SectionRange,
         sections: list[SectionRange],
-    ) -> tuple[
-        DirectJump,
-        SectionRange,
-    ]:
+    ) -> tuple[DirectJump, SectionRange]:
         '''
-        Four runtime behavioral/structural requirements for the stub-exit JMP:
-        1. Direct JMP
-        2. Source is in packed-entry-point section
-        3. Target is in a different section
-        4. Target section is executable
+        Requirements:
+            1. Direct JMP.
+            2. Source is in the packed-entry-point section.
+            3. Target is in a different section.
+            4. Target section is executable.
         '''
 
-        for instruction in (
-            self.debugger.iter_instructions(
-                start_va,
-                max_instructions=(
-                    self.max_post_restore_instructions
-                ),
-            )
-        ):
-
-            jump = (
-                self.debugger.resolve_direct_jump(
-                    instruction
-                )
-            )
+        for instruction in self.debugger.iter_instructions(start_va, max_instructions=self.max_post_restore_instructions):
+            jump = self.debugger.resolve_direct_jump(instruction)
 
             if jump is None:
                 continue
 
-            #
-            # The stub-exit JMP must originate from the
-            # same section containing the packed EP.
-            #
-            if not stub.contains(
-                jump.source
-            ):
+            if not stub.contains(jump.source):
                 continue
 
-            destination = (
-                self._find_section_containing_va(
-                    sections=sections,
-                    address=jump.target,
-                    required=False,
-                )
-            )
+            destination = self._find_section_containing_va(sections, jump.target, required=False)
 
-            #
-            # Ignore jumps outside the main PE image.
-            #
             if destination is None:
                 continue
 
-            #
-            # A stub-exit transition must cross a section
-            # boundary.
-            #
-            if (
-                destination.rva
-                == stub.rva
-            ):
+            if destination.rva == stub.rva:
                 continue
 
-            #
-            # Recovered execution must land in an
-            # executable destination.
-            #
             if not destination.executable:
                 continue
 
-            return (
-                jump,
-                destination,
-            )
+            return jump, destination
 
         raise RuntimeUnpackError(
-            "Could not locate direct inter-section "
-            "stub-exit JMP after the RBX restore"
+            'Could not locate direct inter-section '
+            'stub-exit JMP after the RBX restore'
         )
 
     # ------------------------------------------------------------------
@@ -720,128 +416,67 @@ class RuntimeUnpacker:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _require_push_rbx(
-        instruction: Instruction,
-    ) -> None:
+    def _require_push_rbx(instruction: Instruction) -> None:
+        operands = instruction.operands.lower().replace(' ', '')
 
-        operands = (
-            instruction.operands
-            .lower()
-            .replace(" ", "")
-        )
-
-        if (
-            instruction.mnemonic != "push"
-            or operands != "rbx"
-        ):
+        if instruction.mnemonic != 'push' or operands != 'rbx':
             raise RuntimeUnpackError(
-                "Packed entry point does not begin with "
+                'Packed entry point does not begin with '
                 f"'push rbx': {instruction.text}"
             )
 
     @staticmethod
-    def _is_pop_rbx(
-        instruction: Instruction,
-    ) -> bool:
-
-        operands = (
-            instruction.operands
-            .lower()
-            .replace(" ", "")
-        )
-
-        return (
-            instruction.mnemonic == "pop"
-            and operands == "rbx"
-        )
+    def _is_pop_rbx(instruction: Instruction) -> bool:
+        operands = instruction.operands.lower().replace(' ', '')
+        return instruction.mnemonic == 'pop' and operands == 'rbx'
 
     # ------------------------------------------------------------------
     # PE parsing
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_pe(
-        path: Path,
-    ) -> dict:
-
-        pe = pefile.PE(
-            str(path),
-            fast_load=True,
-        )
+    def _parse_pe(path: Path) -> dict:
+        pe = pefile.PE(str(path), fast_load=True)
 
         try:
             sections = []
 
             for section in pe.sections:
-                name = (
-                    section.Name
-                    .rstrip(b"\x00")
-                    .decode(
-                        "ascii",
-                        errors="replace",
-                    )
-                )
-
-                virtual_size = (
-                    section.Misc_VirtualSize
-                    or section.SizeOfRawData
-                )
+                name = section.Name.rstrip(b'\x00').decode('ascii', errors='replace')
+                virtual_size = section.Misc_VirtualSize or section.SizeOfRawData
 
                 sections.append(
                     {
-                        "name": name,
-                        "rva": (section.VirtualAddress),
-                        "virtual_size": (virtual_size),
-                        "characteristics": (section.Characteristics),
+                        'name': name,
+                        'rva': section.VirtualAddress,
+                        'virtual_size': virtual_size,
+                        'characteristics': section.Characteristics,
                     }
                 )
 
             return {
-                "entry_rva": (
-                    pe.OPTIONAL_HEADER
-                    .AddressOfEntryPoint
-                ),
-                "section_alignment": (
-                    pe.OPTIONAL_HEADER
-                    .SectionAlignment
-                ),
-                "sections": sections,
+                'entry_rva': pe.OPTIONAL_HEADER.AddressOfEntryPoint,
+                'section_alignment': pe.OPTIONAL_HEADER.SectionAlignment,
+                'sections': sections,
             }
 
         finally:
             pe.close()
 
-    def _build_runtime_sections(
-        self,
-        pe_info: dict,
-        image_base: int,
-    ) -> list[SectionRange]:
-
-        alignment = pe_info[
-            "section_alignment"
-        ]
-
+    def _build_runtime_sections(self, pe_info: dict, image_base: int) -> list[SectionRange]:
+        alignment = pe_info['section_alignment']
         result = []
 
-        for section in pe_info["sections"]:
-            size = self._align_up(
-                section["virtual_size"],
-                alignment,
-            )
-
-            start = (
-                image_base
-                + section["rva"]
-            )
+        for section in pe_info['sections']:
+            size = self._align_up(section['virtual_size'], alignment)
+            start = image_base + section['rva']
 
             result.append(
                 SectionRange(
-                    name=section["name"],
-                    rva=section["rva"],
+                    name=section['name'],
+                    rva=section['rva'],
                     virtual_size=size,
-                    characteristics=(
-                        section["characteristics"]
-                    ),
+                    characteristics=section['characteristics'],
                     start_va=start,
                     end_va=start + size,
                 )
@@ -855,32 +490,18 @@ class RuntimeUnpacker:
         address: int,
         required: bool = True,
     ) -> SectionRange | None:
-
         for section in sections:
-            if section.contains(
-                address
-            ):
+            if section.contains(address):
                 return section
 
         if required:
-            raise RuntimeUnpackError(
-                f"Address 0x{address:X} is not "
-                "contained in any PE section"
-            )
+            raise RuntimeUnpackError(f'Address 0x{address:X} is not contained in any PE section')
 
         return None
 
     @staticmethod
-    def _align_up(
-        value: int,
-        alignment: int,
-    ) -> int:
-
+    def _align_up(value: int, alignment: int) -> int:
         if alignment == 0:
             return value
 
-        return (
-            value
-            + alignment
-            - 1
-        ) & ~(alignment - 1)
+        return (value + alignment - 1) & ~(alignment - 1)

@@ -48,7 +48,7 @@ class PostOEPRecoveryResult:
 
 
 class PostOEPRecovery:
-    """
+    '''
     Shared Scylla-like recovery workflow.
 
     Preconditions:
@@ -57,7 +57,7 @@ class PostOEPRecovery:
         - The recovered image base and SizeOfImage are known.
 
     The debugger remains paused at the OEP.
-    """
+    '''
 
     def __init__(self, debugger: CdbDebugger):
         self.debugger = debugger
