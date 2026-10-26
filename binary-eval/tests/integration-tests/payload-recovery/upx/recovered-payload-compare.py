@@ -1,6 +1,9 @@
-
-import hashlib
 import argparse
+import hashlib
+import os
+import sys
+import time
+
 import pefile
 
 
@@ -17,6 +20,35 @@ def compare_value(label, manual, automated):
     print(f"       Automated: {automated}")
 
     return match
+
+
+def load_pe(path, label):
+    print(f"\n[INFO] Loading {label}: {path}", flush=True)
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"PE file not found: {path}")
+
+    print(f"[INFO] File size: {hex(os.path.getsize(path))} bytes", flush=True)
+
+    start = time.perf_counter()
+    pe = pefile.PE(path, fast_load=True)
+
+    print(f"[PASS] PE headers loaded in {time.perf_counter() - start:.3f}s", flush=True)
+
+    print("[INFO] Parsing import directory...", flush=True)
+    start = time.perf_counter()
+
+    pe.parse_data_directories(directories=["IMAGE_DIRECTORY_ENTRY_IMPORT"])
+
+    print(f"[PASS] Import directory parsed in {time.perf_counter() - start:.3f}s", flush=True)
+
+    if pe.get_warnings():
+        print(f"[WARNING] pefile reported {len(pe.get_warnings())} parsing warnings")
+
+        for warning in pe.get_warnings():
+            print(f"    {warning}")
+
+    return pe
 
 
 def compare_headers(manual, automated):
@@ -86,14 +118,14 @@ def compare_section_data(manual, automated):
         hash_a = hashlib.sha256(data_a).hexdigest()
         hash_b = hashlib.sha256(data_b).hexdigest()
 
-        print(f"\n--- {name} ---")
+        print(f"\n--- Section {index}: {name} ---")
 
         results.append(compare_value("SHA256", hash_a, hash_b))
 
         common_length = min(len(data_a), len(data_b))
         max_length = max(len(data_a), len(data_b))
 
-        differences = sum(data_a[i] != data_b[i] for i in range(common_length))
+        differences = sum(x != y for x, y in zip(data_a, data_b))
         differences += abs(len(data_a) - len(data_b))
 
         matching = max_length - differences
@@ -103,13 +135,18 @@ def compare_section_data(manual, automated):
         print(f"Differing bytes: {differences}")
 
         if differences:
-            for offset in range(common_length):
-                if data_a[offset] != data_b[offset]:
-                    rva = a.VirtualAddress + offset
-                    print(f"First differing RVA: {hex(rva)}")
-                    print(f"Manual byte:    {hex(data_a[offset])}")
-                    print(f"Automated byte: {hex(data_b[offset])}")
-                    break
+            first_difference = next((i for i, (x, y) in enumerate(zip(data_a, data_b)) if x != y), None)
+
+            if first_difference is not None:
+                rva_a = a.VirtualAddress + first_difference
+                rva_b = b.VirtualAddress + first_difference
+
+                print(f"First differing manual RVA:    {hex(rva_a)}")
+                print(f"First differing automated RVA: {hex(rva_b)}")
+                print(f"Manual byte:    {hex(data_a[first_difference])}")
+                print(f"Automated byte: {hex(data_b[first_difference])}")
+            else:
+                print(f"First difference occurs after common length: {hex(common_length)}")
 
         results.append(differences == 0)
 
@@ -127,7 +164,7 @@ def compare_entry_point(manual, automated):
     code_a = manual.get_data(oep_a, 0x100)
     code_b = automated.get_data(oep_b, 0x100)
 
-    results.append(compare_value("OEP first 0x100 bytes", code_a.hex(), code_b.hex()))
+    results.append(compare_value("OEP first 0x100 bytes", code_a.hex(" "), code_b.hex(" ")))
 
     return results
 
@@ -147,7 +184,10 @@ def get_imports(pe):
             name = imp.name.decode(errors="replace") if imp.name else f"ordinal_{imp.ordinal}"
             functions.append((name, imp.address - pe.OPTIONAL_HEADER.ImageBase))
 
-        imports[dll] = sorted(functions)
+        imports.setdefault(dll, []).extend(functions)
+
+    for dll in imports:
+        imports[dll].sort()
 
     return imports
 
@@ -160,7 +200,11 @@ def compare_imports(manual, automated):
 
     results = []
 
-    for dll in sorted(set(imports_a) | set(imports_b)):
+    all_dlls = sorted(set(imports_a) | set(imports_b))
+
+    results.append(compare_value("Imported DLL count", len(imports_a), len(imports_b)))
+
+    for dll in all_dlls:
         a = imports_a.get(dll, [])
         b = imports_b.get(dll, [])
 
@@ -180,11 +224,16 @@ def compare_directories(manual, automated):
     dirs_a = manual.OPTIONAL_HEADER.DATA_DIRECTORY
     dirs_b = automated.OPTIONAL_HEADER.DATA_DIRECTORY
 
-    for index in range(min(len(dirs_a), len(dirs_b))):
+    for index in range(max(len(dirs_a), len(dirs_b))):
+        if index >= len(dirs_a) or index >= len(dirs_b):
+            print(f"[DIFF] Directory {index}: Missing directory")
+            results.append(False)
+            continue
+
         a = dirs_a[index]
         b = dirs_b[index]
 
-        name = a.name
+        name = pefile.DIRECTORY_ENTRY.get(index, f"Directory_{index}")
 
         print(f"\n--- {name} ---")
 
@@ -208,7 +257,7 @@ def compare_entropy(manual, automated):
 
         difference = abs(entropy_a - entropy_b)
 
-        print(f"\n{section_name(a)}")
+        print(f"\n--- {section_name(a)} ---")
         print(f"Manual entropy:    {entropy_a:.4f}")
         print(f"Automated entropy: {entropy_b:.4f}")
         print(f"Difference:        {difference:.4f}")
@@ -230,42 +279,69 @@ def main():
     print("       PE RECONSTRUCTION VALIDATION", flush=True)
     print("==============================================", flush=True)
 
-    print(f"\n[INFO] Loading manual PE: {args.manual}", flush=True)
-    manual = pefile.PE(args.manual)
-    print("[PASS] Manual PE loaded", flush=True)
+    print(f"[INFO] Python executable: {sys.executable}", flush=True)
+    print(f"[INFO] Working directory: {os.getcwd()}", flush=True)
 
-    print(f"\n[INFO] Loading automated PE: {args.automated}", flush=True)
-    automated = pefile.PE(args.automated)
-    print("[PASS] Automated PE loaded", flush=True)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    results = []
+    manual_path = args.manual if os.path.isabs(args.manual) else os.path.join(script_dir, args.manual)
+    automated_path = args.automated if os.path.isabs(args.automated) else os.path.join(script_dir, args.automated)
 
-    results += compare_headers(manual, automated)
-    results += compare_sections(manual, automated)
-    results += compare_section_data(manual, automated)
-    results += compare_entry_point(manual, automated)
-    results += compare_imports(manual, automated)
-    results += compare_directories(manual, automated)
-    results += compare_entropy(manual, automated)
+    manual = None
+    automated = None
 
-    passed = sum(results)
-    total = len(results)
+    try:
+        manual = load_pe(manual_path, "manual PE")
+        automated = load_pe(automated_path, "automated PE")
 
-    print("\n==============================================")
-    print("                SUMMARY")
-    print("==============================================")
+        results = []
 
-    print(f"Passed checks: {passed}/{total}")
-    print(f"Failed checks: {total - passed}")
-    print(f"Match percentage: {(passed / total * 100) if total else 0:.2f}%")
+        stages = [
+            ("PE headers", compare_headers),
+            ("Section layout", compare_sections),
+            ("Section hashes and bytes", compare_section_data),
+            ("Entry point", compare_entry_point),
+            ("Imports", compare_imports),
+            ("Data directories", compare_directories),
+            ("Section entropy", compare_entropy)
+        ]
 
-    if all(results):
-        print("\n[PASS] Reconstructed PE files match across all checks.")
-    else:
-        print("\n[WARNING] Differences detected between reconstructed PE files.")
+        for name, function in stages:
+            print(f"\n[INFO] Starting validation: {name}", flush=True)
 
-    manual.close()
-    automated.close()
+            start = time.perf_counter()
+            stage_results = function(manual, automated)
+
+            results.extend(stage_results)
+
+            print(f"[INFO] Completed {name} in {time.perf_counter() - start:.3f}s", flush=True)
+
+        passed = sum(results)
+        total = len(results)
+
+        print("\n==============================================")
+        print("                SUMMARY")
+        print("==============================================")
+
+        print(f"Passed checks: {passed}/{total}")
+        print(f"Failed checks: {total - passed}")
+        print(f"Match percentage: {(passed / total * 100) if total else 0:.2f}%")
+
+        if all(results):
+            print("\n[PASS] Reconstructed PE files match across all checks.")
+        else:
+            print("\n[WARNING] Differences detected between reconstructed PE files.")
+
+    except Exception as exc:
+        print(f"\n[ERROR] {type(exc).__name__}: {exc}", flush=True)
+        raise
+
+    finally:
+        if manual is not None:
+            manual.close()
+
+        if automated is not None:
+            automated.close()
 
 
 if __name__ == "__main__":
