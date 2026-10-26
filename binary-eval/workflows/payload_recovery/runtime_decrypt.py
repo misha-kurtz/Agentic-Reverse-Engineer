@@ -243,18 +243,57 @@ class RuntimeDecryptor:
 
     def run(self, executable: Path | str) -> DecryptResult:
         '''
-        Execute the Hyperion runtime recovery workflow.
-
-        Workflow:
-
-            1. Launch the encrypted executable.
-            2. Stop at the encrypted entry point.
-            3. Observe loader bootstrap and VirtualAlloc.
-            4. Identify the ciphertext REP MOVSQ operation.
-            5. Stop immediately after REP MOVSQ completes.
-            6. Monitor the temporary allocation for clearing.
-            7. Monitor reconstruction of the original PE.
-            8. Identify and validate the recovered OEP.
+        RuntimeDecryptor.run()
+            |
+            |-- Launch encrypted executable
+            |
+            |-- Identify Hyperion API bootstrap
+            |
+            |-- Identify VirtualAlloc
+            |
+            |-- Identify initial REP MOVSQ
+            |
+            |-- CFG-based successful-decryption breakpoint
+            |
+            |-- Validate recovered PE
+            |
+            |-- Monitor VirtualProtect
+            |
+            |-- Stop CDB at recovered OEP
+            |
+            v
+        PostOEPRecovery.run()
+            |
+            |-- Enumerate loaded modules
+            |
+            |-- Discover Standard / Advanced IAT candidates
+            |
+            |-- Select best IAT
+            |
+            |-- Identify and prune invalid thunks
+            |
+            |-- Resolve imports
+            |
+            |-- Dump reconstructed image
+            |
+            |-- Rebuild import descriptors and thunk arrays
+            |
+            |-- Reconstruct disk-layout PE
+            |
+            |-- Patch IAT references
+            |
+            |-- Validate reconstructed PE
+            |
+            v
+        DecryptResult
+            |
+            |-- Hyperion recovery metadata
+            |-- Selected IAT metadata
+            |-- Complete IAT analysis
+            |-- Resolved imports
+            |-- Memory dump path
+            |-- Reconstructed PE path
+            |-- Reconstruction result
         '''
 
         executable = Path(executable)
