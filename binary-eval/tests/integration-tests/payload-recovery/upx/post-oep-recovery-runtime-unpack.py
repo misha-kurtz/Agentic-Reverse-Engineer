@@ -50,11 +50,11 @@ CDB_PATH = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
 
 SAMPLES = {
     "bind_shell": {
-        "path": Path(r"C:\analysis\bind_shell_upx.exe"),
+        "path": Path(r"C:\analysis\bind_shell_packed.exe"),
         "oep_rva": 0x17E0,
     },
     "ransomware": {
-        "path": Path(r"C:\analysis\ransomware_upx.exe"),
+        "path": Path(r"C:\analysis\ransomware_packed.exe"),
         "oep_rva": 0x3998,
     },
 }
