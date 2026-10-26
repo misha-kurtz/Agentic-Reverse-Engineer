@@ -76,49 +76,24 @@ class IATReferencePatcher:
     def __init__(
         self,
         pe: pefile.PE,
-        unpacker_region: UnpackerRegion,
+        unpacker_region: UnpackerRegion | None = None,
     ):
         self.pe = pe
         self.unpacker_region = unpacker_region
 
-        self.disassembler = Cs(
-            CS_ARCH_X86,
-            CS_MODE_64,
-        )
-
+        self.disassembler = Cs(CS_ARCH_X86, CS_MODE_64)
         self.disassembler.detail = True
         self.disassembler.skipdata = True
 
     # Scan executable sections except the runtime-identified unpacker section
-    def _should_scan_section(
-        self,
-        section,
-    ) -> bool:
-
-        #
-        # Scan only executable sections.
-        #
-        if not (
-            section.Characteristics
-            & 0x20000000
-        ):
+    def _should_scan_section(self, section) -> bool:
+        if not (section.Characteristics & 0x20000000):
             return False
 
-        section_start = (
-            section.VirtualAddress
-        )
+        if self.unpacker_region is None:
+            return True
 
-        #
-        # Exclude the runtime-identified unpacker
-        # stub section.
-        #
-        if (
-            section_start
-            == self.unpacker_region.section_rva
-        ):
-            return False
-
-        return True
+        return section.VirtualAddress != self.unpacker_region.section_rva
 
     def patch(
         self,

@@ -11,6 +11,10 @@ import pefile
 
 from runners.debugger import CdbDebugger, DebuggerError, ModuleInfo
 from runners.dynamic_cfg import ControlFlowAnalyzer, classify_control_flow
+from runners.iat import Thunk, IATAnalysisResult
+from runners.import_resolver import ResolvedImport
+from runners.post_oep_recovery import PostOEPRecovery
+from runners.reconstruction import ReconstructionResult
 
 '''
 Hyperion Runtime Decryption Workflow
@@ -150,6 +154,26 @@ class DecryptResult:
 
     sections: tuple[RecoveredSection, ...]
     loaded_modules: tuple[ModuleInfo, ...]
+
+    iat_start_va: int
+    iat_size: int
+
+    iat_valid_thunks: int
+    iat_invalid_thunks: int
+
+    iat_thunks: tuple[Thunk, ...]
+    iat_analysis: IATAnalysisResult
+
+    resolved_imports: tuple[ResolvedImport, ...]
+
+    dump_path: Path
+    reconstructed_path: Path | None
+
+    reconstruction: ReconstructionResult | None
+
+    @property
+    def iat_rva(self) -> int:
+        return self.iat_start_va - self.recovered_image_base
 
 class RuntimeDecryptor:
     '''
@@ -334,7 +358,27 @@ class RuntimeDecryptor:
             )
 
             # --------------------------------------------------
-            # Stage 7: Return OEP synchronization result
+            # Stage 7: Shared post-OEP recovery
+            # --------------------------------------------------
+
+            dump_dir = Path.cwd() / "dumps"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+
+            dump_path = dump_dir / f"{executable.stem}_memory.bin"
+            reconstructed_path = dump_dir / f"{executable.stem}_reconstructed.exe"
+
+            post_oep = PostOEPRecovery(self.debugger)
+
+            post_oep_result = post_oep.run(
+                image_base=image_base,
+                image_size=recovered.image_size,
+                oep_rva=recovered.oep_rva,
+                dump_path=dump_path,
+                reconstructed_path=reconstructed_path,
+            )
+
+            # --------------------------------------------------
+            # Stage 8: Return OEP synchronization result
             # --------------------------------------------------
 
             return DecryptResult(
@@ -342,17 +386,39 @@ class RuntimeDecryptor:
                 pid=pid,
                 encrypted_image_base=image_base,
                 encrypted_entry_rva=encrypted_entry_rva,
+
                 bootstrap_events=bootstrap_events,
                 protection_events=protection_events,
+
                 allocation=allocation,
                 copy=copy,
+
                 intermediate_pe_va=recovered.buffer_va,
                 recovered_image_base=image_base,
                 recovered_image_size=recovered.image_size,
+
                 oep_va=oep_va,
                 oep_rva=recovered.oep_rva,
+
                 sections=recovered.sections,
-                loaded_modules=tuple(self.debugger.get_modules()))
+                loaded_modules=post_oep_result.loaded_modules,
+
+                iat_start_va=post_oep_result.iat_start_va,
+                iat_size=post_oep_result.iat_size,
+
+                iat_valid_thunks=post_oep_result.iat_valid_thunks,
+                iat_invalid_thunks=post_oep_result.iat_invalid_thunks,
+
+                iat_thunks=post_oep_result.iat_thunks,
+                iat_analysis=post_oep_result.iat_analysis,
+
+                resolved_imports=post_oep_result.resolved_imports,
+
+                dump_path=post_oep_result.dump_path,
+                reconstructed_path=post_oep_result.reconstructed_path,
+
+                reconstruction=post_oep_result.reconstruction,
+            )
 
         except Exception:
 

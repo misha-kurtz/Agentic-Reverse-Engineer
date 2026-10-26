@@ -721,59 +721,43 @@ class PEReconstructor:
                     fast_load=False,
                 )
 
-                if packed_entry_rva is None:
-                    raise ReconstructionError(
-                        "packed_entry_rva is required "
-                        "for IAT reference patching"
-                    )
+                unpacker_region = None
 
-                if stub_jump_rva is None:
-                    raise ReconstructionError(
-                        "stub_jump_rva is required "
-                        "for IAT reference patching"
-                    )
+                if packed_entry_rva is not None or stub_jump_rva is not None:
+                    if packed_entry_rva is None or stub_jump_rva is None:
+                        raise ReconstructionError(
+                            "packed_entry_rva and stub_jump_rva must be provided together"
+                        )
 
-                entry_section = (
-                    self._find_section_containing_rva(
+                    entry_section = self._find_section_containing_rva(
                         patch_pe,
                         packed_entry_rva,
                     )
-                )
 
-                exit_section = (
-                    self._find_section_containing_rva(
+                    exit_section = self._find_section_containing_rva(
                         patch_pe,
                         stub_jump_rva,
                     )
-                )
 
-                if (
-                    entry_section.VirtualAddress
-                    != exit_section.VirtualAddress
-                ):
-                    raise ReconstructionError(
-                        "Packed entry point and stub-exit JMP "
-                        "are not in the same reconstructed section"
-                    )
+                    if entry_section.VirtualAddress != exit_section.VirtualAddress:
+                        raise ReconstructionError(
+                            "Packed entry point and stub-exit JMP "
+                            "are not in the same reconstructed section"
+                        )
 
-                stub_section_start = (
-                    entry_section.VirtualAddress
-                )
+                    stub_section_start = entry_section.VirtualAddress
 
-                stub_section_end = (
-                    stub_section_start
-                    + max(
+                    stub_section_end = stub_section_start + max(
                         entry_section.Misc_VirtualSize,
                         entry_section.SizeOfRawData,
                     )
-                )
 
-                unpacker_region = UnpackerRegion(
-                    entry_rva=packed_entry_rva,
-                    exit_jump_rva=stub_jump_rva,
-                    section_rva=stub_section_start,
-                    section_end_rva=stub_section_end,
-                )
+                    unpacker_region = UnpackerRegion(
+                        entry_rva=packed_entry_rva,
+                        exit_jump_rva=stub_jump_rva,
+                        section_rva=stub_section_start,
+                        section_end_rva=stub_section_end,
+                    )
 
                 iat_patcher = IATReferencePatcher(
                     pe=patch_pe,
