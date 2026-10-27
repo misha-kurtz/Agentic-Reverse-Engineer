@@ -157,11 +157,11 @@ class CdbDebugger:
     This class intentionally contains no UPX-specific logic.
     """
 
-    _PROMPT_RE = re.compile( r"(?:\d+:\d+(?::[a-z0-9]+)?|[a-z]+)>\s*$", re.IGNORECASE, )
+    _PROMPT_RE = re.compile(r"(?:\d+:\d+(?::[a-z0-9]+)?|[a-z]+)>\s*$", re.IGNORECASE,)
 
-    _REGISTER_RE = re.compile( r"\b([a-z0-9]+)=([0-9a-fA-F`]+)" )
+    _REGISTER_RE = re.compile(r"\b([a-z0-9]+)=([0-9a-fA-F`]+)")
 
-    _MODULE_RE = re.compile( r"^\s*" r"([0-9a-fA-F`]+)\s+" r"([0-9a-fA-F`]+)\s+" r"(\S+)", re.MULTILINE, )
+    _MODULE_RE = re.compile(r"^\s*" r"([0-9a-fA-F`]+)\s+" r"([0-9a-fA-F`]+)\s+" r"(\S+)", re.MULTILINE,)
 
     # Typical ConsoleDbg disassembly:
     #
@@ -202,10 +202,10 @@ class CdbDebugger:
         arguments = arguments or []
 
         if not self.cdb_path.exists():
-            raise DebuggerError( f"CDB not found: {self.cdb_path}" )
+            raise DebuggerError(f"CDB not found: {self.cdb_path}")
 
         if not executable.exists():
-            raise DebuggerError( f"Debug target not found: {executable}" )
+            raise DebuggerError(f"Debug target not found: {executable}")
 
         command = [
             str(self.cdb_path),
@@ -228,12 +228,12 @@ class CdbDebugger:
             bufsize=0,
         )
 
-        self._reader_thread = threading.Thread( target=self._reader_loop, daemon=True, )
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True,)
 
         self._reader_thread.start()
 
         # CDB initially breaks in the loader/ntdll startup path.
-        self._read_until_prompt( timeout=self.command_timeout, )
+        self._read_until_prompt(timeout=self.command_timeout,)
 
     def close(self) -> None:
         if self._proc is None:
@@ -273,17 +273,17 @@ class CdbDebugger:
 
     def _send_raw(self, text: str) -> None:
         if self._proc is None:
-            raise DebuggerError( "Debugger is not running" )
+            raise DebuggerError("Debugger is not running")
 
         if self._proc.poll() is not None:
-            raise DebuggerError( f"CDB exited with code " f"{self._proc.returncode}" )
+            raise DebuggerError(f"CDB exited with code " f"{self._proc.returncode}")
 
         assert self._proc.stdin is not None
 
         self._proc.stdin.write(text)
         self._proc.stdin.flush()
 
-    def _read_until_prompt( self, timeout: float | None = None, ) -> str:
+    def _read_until_prompt(self, timeout: float | None = None,) -> str:
 
         timeout = timeout or self.command_timeout
         deadline = time.monotonic() + timeout
@@ -295,7 +295,7 @@ class CdbDebugger:
             remaining = max(0.01, deadline - time.monotonic())
 
             try:
-                char = self._output_queue.get( timeout=min(0.1, remaining) )
+                char = self._output_queue.get(timeout=min(0.1, remaining))
             except queue.Empty:
                 continue
 
@@ -307,7 +307,7 @@ class CdbDebugger:
             if self._PROMPT_RE.search(tail):
                 return "".join(output)
 
-        raise DebuggerError( "Timed out waiting for CDB prompt.\n" f"Partial output:\n{''.join(output)}" )
+        raise DebuggerError("Timed out waiting for CDB prompt.\n" f"Partial output:\n{''.join(output)}")
 
     def command(
         self,
@@ -315,17 +315,17 @@ class CdbDebugger:
         timeout: float | None = None,
     ) -> str:
 
-        self._send_raw( command.rstrip() + "\n" )
+        self._send_raw(command.rstrip() + "\n")
 
-        return self._read_until_prompt( timeout=timeout, )
+        return self._read_until_prompt(timeout=timeout,)
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    def continue_execution( self, timeout: float = 120.0, ) -> str:
+    def continue_execution(self, timeout: float = 120.0,) -> str:
 
-        return self.command( "g", timeout=timeout, )
+        return self.command("g", timeout=timeout,)
 
     def step_into(self) -> str:
         return self.command("t")
@@ -334,17 +334,17 @@ class CdbDebugger:
     # Registers
     # ------------------------------------------------------------------
 
-    def get_register( self, name: str, ) -> int:
+    def get_register(self, name: str,) -> int:
 
-        output = self.command( f"r {name}" )
+        output = self.command(f"r {name}")
 
         wanted = name.lower()
 
-        for register, value in self._REGISTER_RE.findall( output ):
+        for register, value in self._REGISTER_RE.findall(output):
             if register.lower() == wanted:
-                return self._parse_address( value )
+                return self._parse_address(value)
 
-        raise DebuggerError( f"Could not parse register " f"{name!r}:\n{output}" )
+        raise DebuggerError(f"Could not parse register " f"{name!r}:\n{output}")
 
     def get_registers(
         self,
@@ -352,10 +352,10 @@ class CdbDebugger:
     ) -> dict[str, int]:
 
         if not names:
-            raise ValueError( "At least one register is required" )
+            raise ValueError("At least one register is required")
 
         return {
-            name.lower(): self.get_register( name )
+            name.lower(): self.get_register(name)
             for name in names
         }
 
@@ -363,25 +363,25 @@ class CdbDebugger:
     # Modules
     # ------------------------------------------------------------------
 
-    def get_module( self, module_name: str, ) -> ModuleInfo:
+    def get_module(self, module_name: str,) -> ModuleInfo:
 
-        stem = Path( module_name ).stem
+        stem = Path(module_name).stem
 
-        output = self.command( f"lm m {stem}" )
+        output = self.command(f"lm m {stem}")
 
-        for match in self._MODULE_RE.finditer( output ):
+        for match in self._MODULE_RE.finditer(output):
             start, end, name = match.groups()
 
             if name.lower() == stem.lower():
                 return ModuleInfo(
                     name=name,
-                    base=self._parse_address( start ),
-                    end=self._parse_address( end ),
+                    base=self._parse_address(start),
+                    end=self._parse_address(end),
                 )
 
-        raise DebuggerError( f"Could not locate module " f"{module_name!r}:\n" f"{output}" )
+        raise DebuggerError(f"Could not locate module " f"{module_name!r}:\n" f"{output}")
 
-    def get_modules( self, ) -> tuple[ModuleInfo, ...]:
+    def get_modules(self,) -> tuple[ModuleInfo, ...]:
         '''
         Return all modules currently loaded in the debuggee.
         '''
@@ -390,19 +390,19 @@ class CdbDebugger:
 
         modules: list[ModuleInfo] = []
 
-        for match in self._MODULE_RE.finditer( output ):
+        for match in self._MODULE_RE.finditer(output):
             start, end, name = match.groups()
 
             modules.append(
                 ModuleInfo(
                     name=name,
-                    base=self._parse_address( start ),
-                    end=self._parse_address( end ),
+                    base=self._parse_address(start),
+                    end=self._parse_address(end),
                 )
             )
 
         if not modules:
-            raise DebuggerError( "Could not parse loaded modules:\n" f"{output}" )
+            raise DebuggerError("Could not parse loaded modules:\n" f"{output}")
 
         return tuple(modules)
 
@@ -410,9 +410,9 @@ class CdbDebugger:
     # Breakpoints
     # ------------------------------------------------------------------
 
-    def set_breakpoint( self, address: int, ) -> None:
+    def set_breakpoint(self, address: int,) -> None:
 
-        self.command( f"bp 0x{address:x}" )
+        self.command(f"bp 0x{address:x}")
 
     def set_access_breakpoint(
         self,
@@ -421,13 +421,13 @@ class CdbDebugger:
     ) -> None:
 
         if size not in (1,2,4,8):
-            raise ValueError( "Hardware breakpoint size must be " "1, 2, 4, or 8" )
+            raise ValueError("Hardware breakpoint size must be " "1, 2, 4, or 8")
 
         if address % size != 0:
-            raise ValueError( f"Address 0x{address:x} is not " f"{size}-byte aligned" )
+            raise ValueError(f"Address 0x{address:x} is not " f"{size}-byte aligned")
 
         # r = break on read OR write access.
-        self.command( f"ba r{size} 0x{address:x}" )
+        self.command(f"ba r{size} 0x{address:x}")
 
     def list_breakpoints(self) -> str:
         return self.command("bl")
@@ -439,21 +439,21 @@ class CdbDebugger:
     # Memory
     # ------------------------------------------------------------------
 
-    def read_qword( self, address: int, ) -> int:
+    def read_qword(self, address: int,) -> int:
 
-        output = self.command( f"dq 0x{address:x} L1" )
+        output = self.command(f"dq 0x{address:x} L1")
 
         # Typical:
         #
         # 00000091`5555fb90  00000000`00000000
-        pattern = re.compile( r"^\s*[0-9a-fA-F`]+\s+" r"([0-9a-fA-F`]+)", re.MULTILINE, )
+        pattern = re.compile(r"^\s*[0-9a-fA-F`]+\s+" r"([0-9a-fA-F`]+)", re.MULTILINE,)
 
-        match = pattern.search( output )
+        match = pattern.search(output)
 
         if match is None:
-            raise DebuggerError( f"Could not read qword at " f"0x{address:x}:\n" f"{output}" )
+            raise DebuggerError(f"Could not read qword at " f"0x{address:x}:\n" f"{output}")
 
-        return self._parse_address( match.group(1) )
+        return self._parse_address(match.group(1))
 
     def read_qwords(
         self,
@@ -462,15 +462,15 @@ class CdbDebugger:
     ) -> tuple[int, ...]:
 
         if count <= 0:
-            raise ValueError( "count must be positive" )
+            raise ValueError("count must be positive")
 
-        output = self.command( f"dq 0x{address:x} L0n{count}" )
+        output = self.command(f"dq 0x{address:x} L0n{count}")
 
         values: list[int] = []
 
-        line_pattern = re.compile( r"^\s*[0-9a-fA-F`]+\s+(.*)$" )
+        line_pattern = re.compile(r"^\s*[0-9a-fA-F`]+\s+(.*)$")
 
-        value_pattern = re.compile( r"\b[0-9a-fA-F]{8}`[0-9a-fA-F]{8}\b" )
+        value_pattern = re.compile(r"\b[0-9a-fA-F]{8}`[0-9a-fA-F]{8}\b")
 
         for line in output.splitlines():
             line_match = line_pattern.match(line)
@@ -481,7 +481,7 @@ class CdbDebugger:
             data_text = line_match.group(1)
 
             for value_text in value_pattern.findall(data_text):
-                values.append( self._parse_address(value_text) )
+                values.append(self._parse_address(value_text))
 
         if len(values) < count:
             raise DebuggerError(
@@ -502,9 +502,9 @@ class CdbDebugger:
         output_path = Path(output_path).resolve()
 
         if end_va <= start_va:
-            raise ValueError( "end_va must be greater than start_va" )
+            raise ValueError("end_va must be greater than start_va")
 
-        output_path.parent.mkdir( parents=True, exist_ok=True, )
+        output_path.parent.mkdir(parents=True, exist_ok=True,)
 
         if output_path.exists():
             output_path.unlink()
@@ -515,14 +515,14 @@ class CdbDebugger:
         if temp_path.exists():
             temp_path.unlink()
 
-        command = ( f".writemem {temp_name} " f"0x{start_va:X} " f"0x{end_va - 1:X}" )
+        command = (f".writemem {temp_name} " f"0x{start_va:X} " f"0x{end_va - 1:X}")
 
         print(f"[debug] CDB dump command: {command}")
 
-        output = self.command( command, timeout=120.0, )
+        output = self.command(command, timeout=120.0,)
 
         if not temp_path.exists():
-            raise DebuggerError( "CDB did not create temporary memory dump " f"{temp_path}:\n{output}" )
+            raise DebuggerError("CDB did not create temporary memory dump " f"{temp_path}:\n{output}")
 
         temp_path.replace(output_path)
 
@@ -579,14 +579,14 @@ class CdbDebugger:
 
         return data
 
-    def disassemble_previous( self, address: int, ) -> Instruction:
+    def disassemble_previous(self, address: int,) -> Instruction:
 
-        output = self.command( f"ub 0x{address:x} L1" )
+        output = self.command(f"ub 0x{address:x} L1")
 
-        instructions = ( self._parse_instructions( output ) )
+        instructions = (self._parse_instructions(output))
 
         if not instructions:
-            raise DebuggerError( f"Could not disassemble before " f"0x{address:x}:\n" f"{output}" )
+            raise DebuggerError(f"Could not disassemble before " f"0x{address:x}:\n" f"{output}")
 
         return instructions[-1]
 
@@ -598,13 +598,13 @@ class CdbDebugger:
 
         current = address
 
-        for _ in range( max_instructions ):
-            instruction = ( self.disassemble_one( current ) )
+        for _ in range(max_instructions):
+            instruction = (self.disassemble_one(current))
 
             yield instruction
 
             if instruction.size == 0:
-                raise DebuggerError( f"Zero-length instruction at " f"0x{instruction.address:x}" )
+                raise DebuggerError(f"Zero-length instruction at " f"0x{instruction.address:x}")
 
             current += instruction.size
 
@@ -613,7 +613,7 @@ class CdbDebugger:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def resolve_direct_jump( instruction: Instruction, ) -> DirectJump | None:
+    def resolve_direct_jump(instruction: Instruction,) -> DirectJump | None:
 
         raw = instruction.raw_bytes
 
@@ -623,10 +623,10 @@ class CdbDebugger:
         # JMP rel32
         #
         # E9 xx xx xx xx
-        if ( raw[0] == 0xE9 and len(raw) >= 5 ):
-            displacement = struct.unpack( "<i", raw[1:5], )[0]
+        if (raw[0] == 0xE9 and len(raw) >= 5):
+            displacement = struct.unpack("<i", raw[1:5],)[0]
 
-            target = ( instruction.address + 5 + displacement )
+            target = (instruction.address + 5 + displacement)
 
             return DirectJump(
                 source=instruction.address,
@@ -637,10 +637,10 @@ class CdbDebugger:
         # JMP rel8
         #
         # EB xx
-        if ( raw[0] == 0xEB and len(raw) >= 2 ):
-            displacement = struct.unpack( "<b", raw[1:2], )[0]
+        if (raw[0] == 0xEB and len(raw) >= 2):
+            displacement = struct.unpack("<b", raw[1:2],)[0]
 
-            target = ( instruction.address + 2 + displacement )
+            target = (instruction.address + 2 + displacement)
 
             return DirectJump(
                 source=instruction.address,
@@ -655,25 +655,25 @@ class CdbDebugger:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_address( value: str, ) -> int:
+    def _parse_address(value: str,) -> int:
 
-        return int( value.replace( "`", "", ), 16, )
+        return int(value.replace("`", "",), 16,)
 
-    def _parse_first_instruction( self, output: str, ) -> Instruction | None:
+    def _parse_first_instruction(self, output: str,) -> Instruction | None:
 
-        instructions = ( self._parse_instructions( output ) )
+        instructions = (self._parse_instructions(output))
 
         if not instructions:
             return None
 
         return instructions[0]
 
-    def _parse_instructions( self, output: str, ) -> list[Instruction]:
+    def _parse_instructions(self, output: str,) -> list[Instruction]:
 
         instructions: list[ Instruction ] = []
 
         for line in output.splitlines():
-            match = self._DISASM_RE.match( line )
+            match = self._DISASM_RE.match(line)
 
             if match is None:
                 continue
@@ -690,17 +690,17 @@ class CdbDebugger:
                 continue
 
             try:
-                raw_bytes = bytes.fromhex( bytes_text )
+                raw_bytes = bytes.fromhex(bytes_text)
 
             except ValueError:
                 continue
 
             instructions.append(
                 Instruction(
-                    address=self._parse_address( address_text ),
+                    address=self._parse_address(address_text),
                     raw_bytes=raw_bytes,
                     mnemonic=mnemonic.lower(),
-                    operands=( operands or "" ).strip(),
+                    operands=(operands or "").strip(),
                     text=line.strip(),
                 )
             )
@@ -719,11 +719,11 @@ class CdbDebugger:
         #
         # .  0    id: 1a2c    create  name: sample.exe
         #
-        pattern = re.compile( r"^\s*[\.\#]?\s*\d+\s+" r"id:\s*([0-9a-fA-F]+)", re.MULTILINE, )
+        pattern = re.compile(r"^\s*[\.\#]?\s*\d+\s+" r"id:\s*([0-9a-fA-F]+)", re.MULTILINE,)
 
         match = pattern.search(output)
 
         if match is None:
-            raise DebuggerError( "Could not determine debuggee PID:\n" f"{output}" )
+            raise DebuggerError("Could not determine debuggee PID:\n" f"{output}")
 
-        return int( match.group(1), 16, )
+        return int(match.group(1), 16,)
