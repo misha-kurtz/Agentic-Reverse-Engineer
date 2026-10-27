@@ -71,32 +71,28 @@ class IATError(RuntimeError):
 
 
 class MemoryReader(Protocol):
-    """
+    '''
     Minimal memory-reading interface required by IATAnalyzer.
 
     Implementations may use CDB, DbgEng, another debugger,
     or any other mechanism capable of reading live process memory.
-    """
+    '''
 
-    def read_qword(
-        self,
-        address: int,
+    def read_qword( self, address: int,
     ) -> int:
-        """
+        '''
         Read one 64-bit little-endian value from process memory.
-        """
+        '''
         ...
 
-    def read_qwords(
-        self,
-        address: int,
+    def read_qwords( self, address: int,
         count: int,
     ) -> tuple[int, ...]:
-        """
+        '''
         Read `count` contiguous 64-bit values beginning at `address`.
 
         Values are returned in increasing memory-address order.
-        """
+        '''
         ...
 
 
@@ -106,9 +102,9 @@ class MemoryReader(Protocol):
 
 
 class ThunkStatus(str, Enum):
-    """
+    '''
     Classification of the resolved address stored in an IAT slot.
-    """
+    '''
 
     VALID_EXTERNAL = "valid_external"
 
@@ -125,23 +121,18 @@ class ThunkStatus(str, Enum):
 
 @dataclass(frozen=True)
 class ModuleRange:
-    """
+    '''
     Runtime VA range occupied by one loaded module.
-    """
+    '''
 
     name: str
     base: int
     end: int
 
-    def contains(
-        self,
-        address: int,
+    def contains( self, address: int,
     ) -> bool:
 
-        return (
-            self.base
-            <= address
-            < self.end
+        return ( self.base <= address < self.end
         )
 
     @property
@@ -151,7 +142,7 @@ class ModuleRange:
 
 @dataclass(frozen=True)
 class Thunk:
-    """
+    '''
     One candidate IAT slot.
 
     slot_va:
@@ -165,7 +156,7 @@ class Thunk:
 
     target_module:
         Module containing target_va, if resolved.
-    """
+    '''
 
     slot_va: int
     target_va: int
@@ -175,10 +166,10 @@ class Thunk:
 
 @dataclass(frozen=True)
 class IATCandidate:
-    """
+    '''
     One candidate IAT range, such as a Scylla-like Normal or Advanced
     search result.
-    """
+    '''
 
     name: str
     start_va: int
@@ -195,91 +186,68 @@ class IATCandidate:
 
     @property
     def valid_external(self) -> int:
-        return sum(
-            thunk.status
-            == ThunkStatus.VALID_EXTERNAL
-            for thunk in self.thunks
+        return sum( thunk.status == ThunkStatus.VALID_EXTERNAL for thunk in self.thunks
         )
 
     @property
     def invalid_internal(self) -> int:
-        return sum(
-            thunk.status
-            == ThunkStatus.INVALID_INTERNAL
-            for thunk in self.thunks
+        return sum( thunk.status == ThunkStatus.INVALID_INTERNAL for thunk in self.thunks
         )
 
     @property
     def unresolved(self) -> int:
-        return sum(
-            thunk.status
-            == ThunkStatus.UNRESOLVED
-            for thunk in self.thunks
+        return sum( thunk.status == ThunkStatus.UNRESOLVED for thunk in self.thunks
         )
 
     @property
     def null_entries(self) -> int:
-        return sum(
-            thunk.status
-            == ThunkStatus.NULL
-            for thunk in self.thunks
+        return sum( thunk.status == ThunkStatus.NULL for thunk in self.thunks
         )
 
     @property
     def invalid_total(self) -> int:
-        """
+        '''
         Entries we would not currently retain during reconstruction.
-        """
+        '''
 
-        return (
-            self.invalid_internal
-            + self.unresolved
+        return ( self.invalid_internal + self.unresolved
         )
 
     @property
     def valid_thunks(self) -> tuple[Thunk, ...]:
-        return tuple(
-            thunk
-            for thunk in self.thunks
-            if thunk.status == ThunkStatus.VALID_EXTERNAL
+        return tuple( thunk for thunk in self.thunks if thunk.status == ThunkStatus.VALID_EXTERNAL
         )
 
     @property
     def non_null_total(self) -> int:
-        return (
-            self.total
-            - self.null_entries
+        return ( self.total - self.null_entries
         )
 
 
     @property
     def valid_density(self) -> float:
-        """
+        '''
         Fraction of the entire candidate range containing
         valid external import targets.
-        """
+        '''
 
         if self.total == 0:
             return 0.0
 
-        return (
-            self.valid_external
-            / self.total
+        return ( self.valid_external / self.total
         )
 
 
     @property
     def invalid_density(self) -> float:
-        """
+        '''
         Fraction of non-null entries that are invalid or unresolved.
-        """
+        '''
 
         if self.non_null_total == 0:
             return 0.0
 
-        return (
-            self.invalid_total
-            / self.non_null_total
+        return ( self.invalid_total / self.non_null_total
         )
 
 @dataclass(frozen=True)
@@ -290,17 +258,15 @@ class IATRange:
 
     @property
     def end_va(self) -> int:
-        return (
-            self.start_va
-            + self.size
+        return ( self.start_va + self.size
         )
 
 
 @dataclass(frozen=True)
 class IATAnalysisResult:
-    """
+    '''
     Result of comparing one or more candidate IAT ranges.
-    """
+    '''
 
     candidates: tuple[IATCandidate, ...]
     selected: IATCandidate
@@ -316,7 +282,7 @@ class IATAnalysisResult:
 
 
 class IATAnalyzer:
-    """
+    '''
     Discover, analyze, and select candidate Import Address Table ranges.
 
     Deterministic strategy:
@@ -329,24 +295,17 @@ class IATAnalyzer:
         5. Analyze and score candidate ranges.
         6. Select the strongest candidate.
         7. Return externally resolved thunks for reconstruction.
-    """
+    '''
 
-    def __init__(
-        self,
-        debugger: MemoryReader,
-        image_start: int,
-        image_end: int,
-        modules: Iterable[ModuleInfo],
-        pointer_size: int = 8,
+    def __init__( self, debugger: MemoryReader,
+        image_start: int, image_end: int, modules: Iterable[ModuleInfo], pointer_size: int = 8,
     ):
         if image_end <= image_start:
-            raise ValueError(
-                "image_end must be greater than image_start"
+            raise ValueError( "image_end must be greater than image_start"
             )
 
         if pointer_size not in (4, 8):
-            raise ValueError(
-                "pointer_size must be 4 or 8"
+            raise ValueError( "pointer_size must be 4 or 8"
             )
 
         self.debugger = debugger
@@ -359,15 +318,11 @@ class IATAnalyzer:
     # Target classification
     # ------------------------------------------------------------------
 
-    def classify_target(
-        self,
-        target_va: int,
+    def classify_target( self, target_va: int,
     ) -> tuple[ThunkStatus, str | None]:
 
         if target_va == 0:
-            return (
-                ThunkStatus.NULL,
-                None,
+            return ( ThunkStatus.NULL, None,
             )
 
         #
@@ -375,45 +330,30 @@ class IATAnalyzer:
         # module rather than back into the executable image being
         # reconstructed.
         #
-        if (
-            self.image_start
-            <= target_va
-            < self.image_end
+        if ( self.image_start <= target_va < self.image_end
         ):
-            return (
-                ThunkStatus.INVALID_INTERNAL,
-                None,
+            return ( ThunkStatus.INVALID_INTERNAL, None,
             )
 
         #
         # Strong validation:
         # the target must fall inside a known loaded module.
         #
-        module = self.resolve_target_module(
-            target_va
+        module = self.resolve_target_module( target_va
         )
 
         if module is not None:
-            return (
-                ThunkStatus.VALID_EXTERNAL,
-                module.name,
+            return ( ThunkStatus.VALID_EXTERNAL, module.name,
             )
 
-        return (
-            ThunkStatus.UNRESOLVED,
-            None,
+        return ( ThunkStatus.UNRESOLVED, None,
         )
 
-    def resolve_target_module(
-        self,
-        target_va: int,
+    def resolve_target_module( self, target_va: int,
     ) -> ModuleInfo | None:
 
         for module in self.modules:
-            if (
-                module.base
-                <= target_va
-                < module.end
+            if ( module.base <= target_va < module.end
             ):
                 return module
 
@@ -423,83 +363,57 @@ class IATAnalyzer:
     # Candidate analysis
     # ------------------------------------------------------------------
 
-    def analyze_candidate(
-        self,
-        name: str,
-        start_va: int,
-        size: int,
+    def analyze_candidate( self, name: str,
+        start_va: int, size: int,
     ) -> IATCandidate:
 
         if size <= 0:
-            raise ValueError(
-                "IAT candidate size must be positive"
+            raise ValueError( "IAT candidate size must be positive"
             )
 
         if start_va <= 0:
-            raise ValueError(
-                "IAT candidate start address must be positive"
+            raise ValueError( "IAT candidate start address must be positive"
             )
 
         if size % self.pointer_size != 0:
-            raise ValueError(
-                f"IAT candidate size 0x{size:x} "
-                f"is not aligned to pointer size "
+            raise ValueError( f"IAT candidate size 0x{size:x} " f"is not aligned to pointer size "
                 f"{self.pointer_size}"
             )
 
         thunks: list[Thunk] = []
 
-        for offset in range(
-            0,
-            size,
+        for offset in range( 0, size,
             self.pointer_size,
         ):
-            slot_va = (
-                start_va
-                + offset
+            slot_va = ( start_va + offset
             )
 
             try:
-                target_va = (
-                    self._read_pointer(
-                        slot_va
+                target_va = ( self._read_pointer( slot_va
                     )
                 )
             except Exception as exc:
-                raise IATError(
-                    "Failed reading candidate IAT slot "
-                    f"0x{slot_va:x}"
+                raise IATError( "Failed reading candidate IAT slot " f"0x{slot_va:x}"
                 ) from exc
 
-            status, module_name = (
-                self.classify_target(
-                    target_va
+            status, module_name = ( self.classify_target( target_va
                 )
             )
 
-            thunks.append(
-                Thunk(
-                    slot_va=slot_va,
-                    target_va=target_va,
-                    status=status,
-                    target_module=module_name,
+            thunks.append( Thunk( slot_va=slot_va, target_va=target_va,
+                    status=status, target_module=module_name,
                 )
             )
 
-        return IATCandidate(
-            name=name,
-            start_va=start_va,
-            size=size,
-            thunks=tuple(thunks),
+        return IATCandidate( name=name, start_va=start_va,
+            size=size, thunks=tuple(thunks),
         )
 
-    def analyze_candidates(
-        self,
-        candidates: Iterable[
+    def analyze_candidates( self, candidates: Iterable[
             tuple[str, int, int]
         ],
     ) -> IATAnalysisResult:
-        """
+        '''
         Convenience wrapper.
 
         candidates:
@@ -512,31 +426,24 @@ class IATAnalyzer:
                 ("normal",   0x..., 0x2F0),
                 ("advanced", 0x..., 0x388),
             ]
-        """
+        '''
 
         analyzed: list[IATCandidate] = []
 
         for name, start_va, size in candidates:
-            analyzed.append(
-                self.analyze_candidate(
-                    name=name,
-                    start_va=start_va,
+            analyzed.append( self.analyze_candidate( name=name, start_va=start_va,
                     size=size,
                 )
             )
 
         if not analyzed:
-            raise IATError(
-                "No IAT candidates were supplied"
+            raise IATError( "No IAT candidates were supplied"
             )
 
-        selected = self.select_best(
-            analyzed
+        selected = self.select_best( analyzed
         )
 
-        return IATAnalysisResult(
-            candidates=tuple(analyzed),
-            selected=selected,
+        return IATAnalysisResult( candidates=tuple(analyzed), selected=selected,
         )
 
     # ------------------------------------------------------------------
@@ -544,10 +451,9 @@ class IATAnalyzer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def score(
-        candidate: IATCandidate,
+    def score( candidate: IATCandidate,
     ) -> tuple[int, float, int, int, int]:
-        """
+        '''
         Lower tuple wins.
 
         Candidates have already passed structural discovery.
@@ -558,31 +464,22 @@ class IATAnalyzer:
             3. Fewer invalid entries.
             4. Higher overall valid density.
             5. Smaller range.
-        """
+        '''
 
-        return (
-            -candidate.valid_external,
-            candidate.invalid_density,
-            candidate.invalid_total,
-            -candidate.valid_density,
-            candidate.size,
+        return ( -candidate.valid_external, candidate.invalid_density,
+            candidate.invalid_total, -candidate.valid_density, candidate.size,
         )
 
-    def select_best(
-        self,
-        candidates: Iterable[IATCandidate],
+    def select_best( self, candidates: Iterable[IATCandidate],
     ) -> IATCandidate:
 
         candidates = tuple(candidates)
 
         if not candidates:
-            raise IATError(
-                "No analyzed IAT candidates supplied"
+            raise IATError( "No analyzed IAT candidates supplied"
             )
 
-        return min(
-            candidates,
-            key=self.score,
+        return min( candidates, key=self.score,
         )
 
     # ------------------------------------------------------------------
@@ -590,20 +487,14 @@ class IATAnalyzer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def prune_invalid_thunks(
-        candidate: IATCandidate,
+    def prune_invalid_thunks( candidate: IATCandidate,
     ) -> tuple[Thunk, ...]:
-        """
+        '''
         Return only thunk entries that resolve into known external
         modules.
-        """
+        '''
 
-        return tuple(
-            thunk
-            for thunk in candidate.thunks
-            if (
-                thunk.status
-                == ThunkStatus.VALID_EXTERNAL
+        return tuple( thunk for thunk in candidate.thunks if ( thunk.status == ThunkStatus.VALID_EXTERNAL
             )
         )
 
@@ -612,17 +503,12 @@ class IATAnalyzer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def format_candidate_summary(
-        candidate: IATCandidate,
+    def format_candidate_summary( candidate: IATCandidate,
     ) -> str:
 
-        return (
-            f"{candidate.name}:\n"
-            f"  start:            0x{candidate.start_va:X}\n"
-            f"  end:              0x{candidate.end_va:X}\n"
-            f"  size:             0x{candidate.size:X}\n"
-            f"  total thunks:     {candidate.total}\n"
-            f"  valid external:   {candidate.valid_external}\n"
+        return ( f"{candidate.name}:\n" f"  start:            0x{candidate.start_va:X}\n"
+            f"  end:              0x{candidate.end_va:X}\n" f"  size:             0x{candidate.size:X}\n"
+            f"  total thunks:     {candidate.total}\n" f"  valid external:   {candidate.valid_external}\n"
             f"  invalid internal: {candidate.invalid_internal}\n"
             f"  unresolved:       {candidate.unresolved}\n"
             f"  null:             {candidate.null_entries}\n"
@@ -631,104 +517,65 @@ class IATAnalyzer:
         )
 
     @classmethod
-    def format_analysis_result(
-        cls,
-        result: IATAnalysisResult,
+    def format_analysis_result( cls, result: IATAnalysisResult,
     ) -> str:
 
         sections = []
 
         for candidate in result.candidates:
-            sections.append(
-                cls.format_candidate_summary(
-                    candidate
+            sections.append( cls.format_candidate_summary( candidate
                 )
             )
 
-        sections.append(
-            "Selected: "
-            f"{result.selected.name}"
+        sections.append( "Selected: " f"{result.selected.name}"
         )
 
-        return "\n\n".join(
-            sections
+        return "\n\n".join( sections
         )
 
     @staticmethod
-    def format_thunks(
-        candidate: IATCandidate,
-        include_valid: bool = True,
-        include_invalid: bool = True,
-        include_null: bool = False,
+    def format_thunks( candidate: IATCandidate, include_valid: bool = True,
+        include_invalid: bool = True, include_null: bool = False,
     ) -> str:
 
         lines = []
 
         for thunk in candidate.thunks:
 
-            if (
-                thunk.status
-                == ThunkStatus.VALID_EXTERNAL
-                and not include_valid
+            if ( thunk.status == ThunkStatus.VALID_EXTERNAL and not include_valid
             ):
                 continue
 
-            if (
-                thunk.status
-                in (
-                    ThunkStatus.INVALID_INTERNAL,
-                    ThunkStatus.UNRESOLVED,
-                )
-                and not include_invalid
+            if ( thunk.status in ( ThunkStatus.INVALID_INTERNAL, ThunkStatus.UNRESOLVED,
+                ) and not include_invalid
             ):
                 continue
 
-            if (
-                thunk.status
-                == ThunkStatus.NULL
-                and not include_null
+            if ( thunk.status == ThunkStatus.NULL and not include_null
             ):
                 continue
 
-            module = (
-                thunk.target_module
-                if thunk.target_module
-                else "-"
+            module = ( thunk.target_module if thunk.target_module else "-"
             )
 
-            lines.append(
-                f"slot=0x{thunk.slot_va:016X} "
-                f"target=0x{thunk.target_va:016X} "
-                f"status={thunk.status.value} "
-                f"module={module}"
+            lines.append( f"slot=0x{thunk.slot_va:016X} " f"target=0x{thunk.target_va:016X} "
+                f"status={thunk.status.value} " f"module={module}"
             )
 
-        return "\n".join(
-            lines
+        return "\n".join( lines
         )
 
-    def format_range_context(
-        self,
-        candidate: IATCandidate,
-        before: int = 16,
-        after: int = 16,
+    def format_range_context( self, candidate: IATCandidate,
+        before: int = 16, after: int = 16,
     ) -> str:
 
-        start = max(
-            self.image_start,
-            candidate.start_va
-            - before * self.pointer_size,
+        start = max( self.image_start, candidate.start_va - before * self.pointer_size,
         )
 
-        end = min(
-            self.image_end,
-            candidate.end_va
-            + after * self.pointer_size,
+        end = min( self.image_end, candidate.end_va + after * self.pointer_size,
         )
 
-        thunks = self._scan_pointer_range(
-            start_va=start,
-            end_va=end,
+        thunks = self._scan_pointer_range( start_va=start, end_va=end,
         )
 
         lines = []
@@ -736,12 +583,8 @@ class IATAnalyzer:
         for thunk in thunks:
             module = thunk.target_module or "-"
 
-            lines.append(
-                f"slot=0x{thunk.slot_va:016X} "
-                f"rva=0x{thunk.slot_va - self.image_start:05X} "
-                f"target=0x{thunk.target_va:016X} "
-                f"status={thunk.status.value} "
-                f"module={module}"
+            lines.append( f"slot=0x{thunk.slot_va:016X} " f"rva=0x{thunk.slot_va - self.image_start:05X} "
+                f"target=0x{thunk.target_va:016X} " f"status={thunk.status.value} " f"module={module}"
             )
 
         return "\n".join(lines)
@@ -750,14 +593,11 @@ class IATAnalyzer:
     # Memory helpers
     # ------------------------------------------------------------------
 
-    def _read_pointer(
-        self,
-        address: int,
+    def _read_pointer( self, address: int,
     ) -> int:
 
         if self.pointer_size == 8:
-            return self.debugger.read_qword(
-                address
+            return self.debugger.read_qword( address
             )
 
         #
@@ -765,39 +605,28 @@ class IATAnalyzer:
         #
         # Leaving this explicit rather than silently truncating a qword.
         #
-        raise IATError(
-            "32-bit pointer reads are not yet implemented"
+        raise IATError( "32-bit pointer reads are not yet implemented"
         )
 
 
-    def _scan_pointer_range(
-        self,
-        start_va: int,
-        end_va: int,
-        chunk_slots: int = 256,
+    def _scan_pointer_range( self, start_va: int,
+        end_va: int, chunk_slots: int = 256,
     ) -> tuple[Thunk, ...]:
         '''
         Get live pointer map
         '''
 
         if end_va <= start_va:
-            raise ValueError(
-                "end_va must be greater than start_va"
+            raise ValueError( "end_va must be greater than start_va"
             )
 
-        start_va = (
-            start_va
-            - (start_va % self.pointer_size)
+        start_va = ( start_va - (start_va % self.pointer_size)
         )
 
-        scan_size = (
-            end_va
-            - start_va
+        scan_size = ( end_va - start_va
         )
 
-        slot_count = (
-            scan_size
-            // self.pointer_size
+        slot_count = ( scan_size // self.pointer_size
         )
 
         thunks: list[Thunk] = []
@@ -806,51 +635,31 @@ class IATAnalyzer:
 
         while slot_index < slot_count:
 
-            current_count = min(
-                chunk_slots,
-                slot_count - slot_index,
+            current_count = min( chunk_slots, slot_count - slot_index,
             )
 
-            chunk_start = (
-                start_va
-                + (
-                    slot_index
-                    * self.pointer_size
+            chunk_start = ( start_va + ( slot_index * self.pointer_size
                 )
             )
 
 
-            values = (
-                self.debugger.read_qwords(
-                    chunk_start,
-                    current_count,
+            values = ( self.debugger.read_qwords( chunk_start, current_count,
                 )
             )
 
-            for index, target_va in enumerate(
-                values
+            for index, target_va in enumerate( values
             ):
 
-                slot_va = (
-                    chunk_start
-                    + (
-                        index
-                        * self.pointer_size
+                slot_va = ( chunk_start + ( index * self.pointer_size
                     )
                 )
 
-                status, module_name = (
-                    self.classify_target(
-                        target_va
+                status, module_name = ( self.classify_target( target_va
                     )
                 )
 
-                thunks.append(
-                    Thunk(
-                        slot_va=slot_va,
-                        target_va=target_va,
-                        status=status,
-                        target_module=module_name,
+                thunks.append( Thunk( slot_va=slot_va, target_va=target_va,
+                        status=status, target_module=module_name,
                     )
                 )
 
@@ -858,11 +667,8 @@ class IATAnalyzer:
 
         return tuple(thunks)
 
-    def _discover_strict_ranges(
-        self,
-        thunks: tuple[Thunk, ...],
-        min_valid_thunks: int = 4,
-        max_null_gap: int = 2,
+    def _discover_strict_ranges( self,
+        thunks: tuple[Thunk, ...], min_valid_thunks: int = 4, max_null_gap: int = 2,
     ) -> tuple[IATRange, ...]:
 
         ranges: list[IATRange] = []
@@ -871,9 +677,7 @@ class IATAnalyzer:
 
         while index < len(thunks):
 
-            if (
-                thunks[index].status
-                != ThunkStatus.VALID_EXTERNAL
+            if ( thunks[index].status != ThunkStatus.VALID_EXTERNAL
             ):
                 index += 1
                 continue
@@ -888,9 +692,7 @@ class IATAnalyzer:
 
                 thunk = thunks[index]
 
-                if (
-                    thunk.status
-                    == ThunkStatus.VALID_EXTERNAL
+                if ( thunk.status == ThunkStatus.VALID_EXTERNAL
                 ):
                     valid_count += 1
                     null_run = 0
@@ -898,9 +700,7 @@ class IATAnalyzer:
                     index += 1
                     continue
 
-                if (
-                    thunk.status
-                    == ThunkStatus.NULL
+                if ( thunk.status == ThunkStatus.NULL
                 ):
                     null_run += 1
 
@@ -914,24 +714,14 @@ class IATAnalyzer:
 
             if valid_count >= min_valid_thunks:
 
-                start_va = (
-                    thunks[start_index].slot_va
+                start_va = ( thunks[start_index].slot_va
                 )
 
-                end_va = (
-                    thunks[end_index].slot_va
-                    + self.pointer_size
+                end_va = ( thunks[end_index].slot_va + self.pointer_size
                 )
 
-                ranges.append(
-                    IATRange(
-                        name=(
-                            f"strict_{len(ranges)}"
-                        ),
-                        start_va=start_va,
-                        size=(
-                            end_va
-                            - start_va
+                ranges.append( IATRange( name=( f"strict_{len(ranges)}"
+                        ), start_va=start_va, size=( end_va - start_va
                         ),
                     )
                 )
@@ -941,13 +731,10 @@ class IATAnalyzer:
 
         return tuple(ranges)
 
-    def _recover_iat_boundaries(
-        self,
-        thunks: tuple[Thunk, ...],
-        strict_ranges: tuple[IATRange, ...],
-        max_tail_slots: int = 32,
+    def _recover_iat_boundaries( self,
+        thunks: tuple[Thunk, ...], strict_ranges: tuple[IATRange, ...], max_tail_slots: int = 32,
     ) -> tuple[IATRange, ...]:
-        """
+        '''
         Expand strict IAT cores into probable complete IAT ranges.
 
         Boundary rules:
@@ -955,19 +742,16 @@ class IATAnalyzer:
             - Walk forward through invalid/unresolved/NULL entries.
             - Stop at the first run of two consecutive NULL slots.
             - Exclude the terminating NULL run.
-        """
+        '''
 
-        index_by_va = {
-            thunk.slot_va: index
-            for index, thunk in enumerate(thunks)
+        index_by_va = { thunk.slot_va: index for index, thunk in enumerate(thunks)
         }
 
         recovered: list[IATRange] = []
 
         for strict_range in strict_ranges:
             start_index = index_by_va[strict_range.start_va]
-            end_index = index_by_va[
-                strict_range.end_va - self.pointer_size
+            end_index = index_by_va[ strict_range.end_va - self.pointer_size
             ]
 
             # Include one leading NULL boundary slot.
@@ -978,9 +762,7 @@ class IATAnalyzer:
                     start_index -= 1
 
             cursor = end_index + 1
-            tail_limit = min(
-                len(thunks),
-                cursor + max_tail_slots,
+            tail_limit = min( len(thunks), cursor + max_tail_slots,
             )
 
             null_run = 0
@@ -1017,110 +799,78 @@ class IATAnalyzer:
 
             start_va = thunks[start_index].slot_va
 
-            end_va = (
-                thunks[recovered_end_index].slot_va
-                + self.pointer_size
+            end_va = ( thunks[recovered_end_index].slot_va + self.pointer_size
             )
 
-            recovered.append(
-                IATRange(
-                    name=f"recovered_{len(recovered)}",
-                    start_va=start_va,
+            recovered.append( IATRange( name=f"recovered_{len(recovered)}", start_va=start_va,
                     size=end_va - start_va,
                 )
             )
 
         return tuple(recovered)
 
-    def _expand_strict_boundaries(
-        self,
-        strict_ranges: tuple[IATRange, ...],
-        thunks: tuple[Thunk, ...],
-        boundary_slots: int = 16,
+    def _expand_strict_boundaries( self,
+        strict_ranges: tuple[IATRange, ...], thunks: tuple[Thunk, ...], boundary_slots: int = 16,
     ) -> tuple[IATRange, ...]:
 
         if boundary_slots < 1:
-            raise ValueError(
-                "boundary_slots must be at least 1"
+            raise ValueError( "boundary_slots must be at least 1"
             )
 
-        index_by_va = {
-            thunk.slot_va: index
-            for index, thunk in enumerate(thunks)
+        index_by_va = { thunk.slot_va: index for index, thunk in enumerate(thunks)
         }
 
         expanded: list[IATRange] = []
 
         for strict_range in strict_ranges:
 
-            start_index = index_by_va[
-                strict_range.start_va
+            start_index = index_by_va[ strict_range.start_va
             ]
 
-            end_index = index_by_va[
-                strict_range.end_va
-                - self.pointer_size
+            end_index = index_by_va[ strict_range.end_va - self.pointer_size
             ]
 
-            expanded_start_index = max(
-                0,
-                start_index - boundary_slots,
+            expanded_start_index = max( 0, start_index - boundary_slots,
             )
 
-            expanded_end_index = min(
-                len(thunks) - 1,
-                end_index + boundary_slots,
+            expanded_end_index = min( len(thunks) - 1, end_index + boundary_slots,
             )
 
-            expanded_start = (
-                thunks[
-                    expanded_start_index
+            expanded_start = ( thunks[ expanded_start_index
                 ].slot_va
             )
 
-            expanded_end = (
-                thunks[
-                    expanded_end_index
-                ].slot_va
-                + self.pointer_size
+            expanded_end = ( thunks[ expanded_end_index
+                ].slot_va + self.pointer_size
             )
 
-            expanded.append(
-                IATRange(
-                    name=f"boundary_{len(expanded)}",
-                    start_va=expanded_start,
+            expanded.append( IATRange( name=f"boundary_{len(expanded)}", start_va=expanded_start,
                     size=expanded_end - expanded_start,
                 )
             )
 
         return tuple(expanded)
 
-    def _discover_expanded_ranges(
-        self,
-        thunks: tuple[Thunk, ...],
-        strict_ranges: tuple[IATRange, ...],
-        max_noise_gap: int = 2,
+    def _discover_expanded_ranges( self,
+        thunks: tuple[Thunk, ...], strict_ranges: tuple[IATRange, ...], max_noise_gap: int = 2,
     ) -> tuple[IATRange, ...]:
-        """
+        '''
         Merge neighboring strict IAT ranges when they are separated
         by only a very small number of invalid/unresolved pointer slots.
 
         This provides a conservative "advanced" candidate analogous
         to expanding a strict IAT search without hard-coding
         sample-specific addresses.
-        """
+        '''
 
         if max_noise_gap < 1:
-            raise ValueError(
-                "max_noise_gap must be at least 1"
+            raise ValueError( "max_noise_gap must be at least 1"
             )
 
         if len(strict_ranges) < 2:
             return ()
 
-        thunk_by_va = {
-            thunk.slot_va: thunk
-            for thunk in thunks
+        thunk_by_va = { thunk.slot_va: thunk for thunk in thunks
         }
 
         expanded: list[IATRange] = []
@@ -1135,20 +885,13 @@ class IATAnalyzer:
             gap_start = current_end
             gap_end = next_range.start_va
 
-            gap_size = (
-                gap_end
-                - gap_start
+            gap_size = ( gap_end - gap_start
             )
 
-            gap_slots = (
-                gap_size
-                // self.pointer_size
+            gap_slots = ( gap_size // self.pointer_size
             )
 
-            can_merge = (
-                1
-                <= gap_slots
-                <= max_noise_gap
+            can_merge = ( 1 <= gap_slots <= max_noise_gap
             )
 
             if can_merge:
@@ -1159,36 +902,29 @@ class IATAnalyzer:
 
                 while address < gap_end:
 
-                    thunk = thunk_by_va.get(
-                        address
+                    thunk = thunk_by_va.get( address
                     )
 
                     if thunk is None:
                         can_merge = False
                         break
 
-                    gap_thunks.append(
-                        thunk
+                    gap_thunks.append( thunk
                     )
 
                     address += self.pointer_size
 
                 if can_merge:
 
-                    allowed_noise = {
-                        ThunkStatus.INVALID_INTERNAL,
-                        ThunkStatus.UNRESOLVED,
+                    allowed_noise = { ThunkStatus.INVALID_INTERNAL, ThunkStatus.UNRESOLVED,
                     }
 
-                    can_merge = all(
-                        thunk.status in allowed_noise
-                        for thunk in gap_thunks
+                    can_merge = all( thunk.status in allowed_noise for thunk in gap_thunks
                     )
 
             if can_merge:
 
-                current_end = (
-                    next_range.end_va
+                current_end = ( next_range.end_va
                 )
 
                 merged_any = True
@@ -1197,40 +933,24 @@ class IATAnalyzer:
 
             if merged_any:
 
-                expanded.append(
-                    IATRange(
-                        name=(
-                            f"expanded_{len(expanded)}"
-                        ),
-                        start_va=current_start,
-                        size=(
-                            current_end
-                            - current_start
+                expanded.append( IATRange( name=( f"expanded_{len(expanded)}"
+                        ), start_va=current_start, size=( current_end - current_start
                         ),
                     )
                 )
 
-            current_start = (
-                next_range.start_va
+            current_start = ( next_range.start_va
             )
 
-            current_end = (
-                next_range.end_va
+            current_end = ( next_range.end_va
             )
 
             merged_any = False
 
         if merged_any:
 
-            expanded.append(
-                IATRange(
-                    name=(
-                        f"expanded_{len(expanded)}"
-                    ),
-                    start_va=current_start,
-                    size=(
-                        current_end
-                        - current_start
+            expanded.append( IATRange( name=( f"expanded_{len(expanded)}"
+                    ), start_va=current_start, size=( current_end - current_start
                     ),
                 )
             )
@@ -1238,27 +958,20 @@ class IATAnalyzer:
         return tuple(expanded)
 
 
-    def discover_candidates(
-        self,
+    def discover_candidates( self,
     ) -> tuple[IATRange, ...]:
 
-        scanned = self._scan_pointer_range(
-            start_va=self.image_start,
-            end_va=self.image_end,
+        scanned = self._scan_pointer_range( start_va=self.image_start, end_va=self.image_end,
         )
 
-        strict_ranges = self._discover_strict_ranges(
-            scanned
+        strict_ranges = self._discover_strict_ranges( scanned
         )
 
         if not strict_ranges:
-            raise IATError(
-                "No candidate IAT ranges discovered"
+            raise IATError( "No candidate IAT ranges discovered"
             )
 
-        recovered_ranges = self._recover_iat_boundaries(
-            thunks=scanned,
-            strict_ranges=strict_ranges,
+        recovered_ranges = self._recover_iat_boundaries( thunks=scanned, strict_ranges=strict_ranges,
         )
 
         if recovered_ranges:
@@ -1266,25 +979,18 @@ class IATAnalyzer:
 
         return strict_ranges
 
-    def discover_and_analyze(
-        self,
+    def discover_and_analyze( self,
     ) -> IATAnalysisResult:
-        """
+        '''
         Discover candidate IAT ranges, analyze each candidate,
         and select the strongest candidate.
-        """
+        '''
 
-        discovered = (
-            self.discover_candidates()
+        discovered = ( self.discover_candidates()
         )
 
-        return self.analyze_candidates(
-            (
-                (
-                    candidate.name,
-                    candidate.start_va,
+        return self.analyze_candidates( ( ( candidate.name, candidate.start_va,
                     candidate.size,
-                )
-                for candidate in discovered
+                ) for candidate in discovered
             )
         )
