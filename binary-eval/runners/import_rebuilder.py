@@ -100,76 +100,42 @@ class IATRelocation:
     function_name: str | None
     ordinal: int | None
 
-def group_imports_by_module(
-    imports: list[ResolvedImport],
-) -> dict[str, list[ResolvedImport]]:
 
-    grouped: dict[
-        str,
-        list[ResolvedImport]
-    ] = defaultdict(list)
+def group_imports_by_module(imports: list[ResolvedImport]) -> dict[str, list[ResolvedImport]]:
+    grouped: dict[str, list[ResolvedImport]] = defaultdict(list)
 
     for resolved in imports:
-        grouped[
-            resolved.module_name
-        ].append(
-            resolved
-        )
+        grouped[resolved.module_name].append(resolved)
 
     return dict(grouped)
 
-def normalize_module_name(
-    name: str,
-) -> str:
 
-    if name.lower().endswith(
-        ".dll"
-    ):
+def normalize_module_name(name: str) -> str:
+    if name.lower().endswith(".dll"):
         return name
 
     return f"{name}.dll"
 
-def build_import_modules(
-    imports: list[ResolvedImport],
-) -> tuple[ImportModule, ...]:
 
+def build_import_modules(imports: list[ResolvedImport]) -> tuple[ImportModule, ...]:
     grouped = group_imports_by_module(imports)
-
     modules: list[ImportModule] = []
 
     for module_name, module_imports in grouped.items():
-        ordered_imports = tuple(
-            sorted(
-                module_imports,
-                key=lambda resolved: resolved.slot_va,
-            )
-        )
-
-        modules.append(
-            ImportModule(
-                name=normalize_module_name(module_name),
-                imports=ordered_imports,
-            )
-        )
+        ordered_imports = tuple(sorted(module_imports, key=lambda resolved: resolved.slot_va))
+        modules.append(ImportModule(name=normalize_module_name(module_name), imports=ordered_imports))
 
     return tuple(modules)
 
-def align_up(
-    value: int,
-    alignment: int,
-) -> int:
 
+def align_up(value: int, alignment: int) -> int:
     if alignment <= 0:
         raise ValueError("alignment must be greater than zero")
 
     return (value + alignment - 1) & ~(alignment - 1)
 
-def calculate_layout(
-    modules: tuple[ImportModule, ...],
-    section_rva: int,
-    pointer_size: int = 8,
-) -> ImportLayout:
 
+def calculate_layout(modules: tuple[ImportModule, ...], section_rva: int, pointer_size: int = 8) -> ImportLayout:
     if section_rva < 0:
         raise ValueError("section_rva cannot be negative")
 
@@ -178,7 +144,6 @@ def calculate_layout(
 
     descriptor_size = 20
     descriptor_table_size = (len(modules) + 1) * descriptor_size
-
     descriptor_rva = section_rva
     cursor = section_rva + descriptor_table_size
 
@@ -189,7 +154,6 @@ def calculate_layout(
 
     for module in modules:
         dll_name_rvas.append(cursor)
-
         encoded_name = module.name.encode("ascii")
         cursor += len(encoded_name) + 1
 
@@ -205,7 +169,6 @@ def calculate_layout(
             if resolved.function_name is not None:
                 cursor = align_up(cursor, 2)
                 module_name_rvas.append(cursor)
-
                 encoded_name = resolved.function_name.encode("ascii")
 
                 #
@@ -226,42 +189,34 @@ def calculate_layout(
                     "has neither a function name nor an ordinal"
                 )
 
-        import_name_rvas_by_module.append(
-            tuple(module_name_rvas)
-        )
+        import_name_rvas_by_module.append(tuple(module_name_rvas))
 
     #
     # INT arrays.
     #
     cursor = align_up(cursor, pointer_size)
-
     int_rvas: list[int] = []
     int_sizes: list[int] = []
 
     for module in modules:
         int_rva = cursor
         int_size = (len(module.imports) + 1) * pointer_size
-
         int_rvas.append(int_rva)
         int_sizes.append(int_size)
-
         cursor += int_size
 
     #
     # IAT arrays.
     #
     cursor = align_up(cursor, pointer_size)
-
     iat_rvas: list[int] = []
     iat_sizes: list[int] = []
 
     for module in modules:
         iat_rva = cursor
         iat_size = (len(module.imports) + 1) * pointer_size
-
         iat_rvas.append(iat_rva)
         iat_sizes.append(iat_size)
-
         cursor += iat_size
 
     module_layouts: list[ImportModuleLayout] = []
@@ -276,7 +231,7 @@ def calculate_layout(
                 int_rva=int_rvas[index],
                 iat_rva=iat_rvas[index],
                 int_size=int_sizes[index],
-                iat_size=iat_sizes[index],
+                iat_size=iat_sizes[index]
             )
         )
 
@@ -285,14 +240,11 @@ def calculate_layout(
         section_size=cursor - section_rva,
         descriptor_rva=descriptor_rva,
         descriptor_size=descriptor_table_size,
-        modules=tuple(module_layouts),
+        modules=tuple(module_layouts)
     )
 
-def build_import_section(
-    layout: ImportLayout,
-    pointer_size: int = 8,
-) -> bytes:
 
+def build_import_section(layout: ImportLayout, pointer_size: int = 8) -> bytes:
     if pointer_size not in (4, 8):
         raise ValueError("pointer_size must be 4 or 8")
 
@@ -309,9 +261,7 @@ def build_import_section(
         offset = rva - layout.section_rva
 
         if offset < 0 or offset >= len(data):
-            raise ValueError(
-                f"RVA 0x{rva:X} falls outside import section"
-            )
+            raise ValueError(f"RVA 0x{rva:X} falls outside import section")
 
         return offset
 
@@ -319,10 +269,7 @@ def build_import_section(
     # 1. Write IMAGE_IMPORT_DESCRIPTOR entries.
     #
     for module_layout in layout.modules:
-        descriptor_offset = rva_to_offset(
-            module_layout.descriptor_rva
-        )
-
+        descriptor_offset = rva_to_offset(module_layout.descriptor_rva)
         struct.pack_into(
             "<IIIII",
             data,
@@ -331,7 +278,7 @@ def build_import_section(
             0,
             0,
             module_layout.dll_name_rva,
-            module_layout.iat_rva,
+            module_layout.iat_rva
         )
 
     #
@@ -344,24 +291,14 @@ def build_import_section(
     #
     for module_layout in layout.modules:
         dll_name = module_layout.module.name.encode("ascii") + b"\x00"
-
-        dll_name_offset = rva_to_offset(
-            module_layout.dll_name_rva
-        )
-
-        data[
-            dll_name_offset:
-            dll_name_offset + len(dll_name)
-        ] = dll_name
+        dll_name_offset = rva_to_offset(module_layout.dll_name_rva)
+        data[dll_name_offset:dll_name_offset + len(dll_name)] = dll_name
 
     #
     # 3. Write IMAGE_IMPORT_BY_NAME structures.
     #
     for module_layout in layout.modules:
-        for resolved, name_rva in zip(
-            module_layout.module.imports,
-            module_layout.import_name_rvas,
-        ):
+        for resolved, name_rva in zip(module_layout.module.imports, module_layout.import_name_rvas):
             if name_rva is None:
                 continue
 
@@ -371,14 +308,8 @@ def build_import_section(
                     "has an import-name RVA but no function name"
                 )
 
-            name_offset = rva_to_offset(
-                name_rva
-            )
-
-            function_name = (
-                resolved.function_name.encode("ascii")
-                + b"\x00"
-            )
+            name_offset = rva_to_offset(name_rva)
+            function_name = resolved.function_name.encode("ascii") + b"\x00"
 
             #
             # IMAGE_IMPORT_BY_NAME:
@@ -386,47 +317,25 @@ def build_import_section(
             # WORD Hint = 0
             # CHAR Name[]
             #
-            struct.pack_into(
-                "<H",
-                data,
-                name_offset,
-                0,
-            )
-
+            struct.pack_into("<H", data, name_offset, 0)
             function_offset = name_offset + 2
-
-            data[
-                function_offset:
-                function_offset + len(function_name)
-            ] = function_name
+            data[function_offset:function_offset + len(function_name)] = function_name
 
     #
     # 4. Write INT and IAT thunk arrays.
     #
     for module_layout in layout.modules:
-        int_offset = rva_to_offset(
-            module_layout.int_rva
-        )
+        int_offset = rva_to_offset(module_layout.int_rva)
+        iat_offset = rva_to_offset(module_layout.iat_rva)
 
-        iat_offset = rva_to_offset(
-            module_layout.iat_rva
-        )
-
-        for index, resolved in enumerate(
-            module_layout.module.imports
-        ):
-            name_rva = (
-                module_layout.import_name_rvas[index]
-            )
+        for index, resolved in enumerate(module_layout.module.imports):
+            name_rva = module_layout.import_name_rvas[index]
 
             if name_rva is not None:
                 thunk_value = name_rva
 
             elif resolved.ordinal is not None:
-                thunk_value = (
-                    ordinal_flag
-                    | resolved.ordinal
-                )
+                thunk_value = ordinal_flag | resolved.ordinal
 
             else:
                 raise ImportResolutionError(
@@ -438,14 +347,13 @@ def build_import_section(
                 thunk_format,
                 data,
                 int_offset + (index * pointer_size),
-                thunk_value,
+                thunk_value
             )
-
             struct.pack_into(
                 thunk_format,
                 data,
                 iat_offset + (index * pointer_size),
-                thunk_value,
+                thunk_value
             )
 
         #
@@ -456,25 +364,16 @@ def build_import_section(
 
     return bytes(data)
 
-# Build old IAT -> new IAT mapping (old slot RVA -> new slot RVA)
-def build_iat_relocations(
-    layout: ImportLayout,
-    image_base: int,
-    pointer_size: int = 8,
-) -> tuple[IATRelocation, ...]:
 
+# Build old IAT -> new IAT mapping (old slot RVA -> new slot RVA)
+def build_iat_relocations(layout: ImportLayout, image_base: int, pointer_size: int = 8) -> tuple[IATRelocation, ...]:
     relocations: list[IATRelocation] = []
 
     for module_layout in layout.modules:
         module = module_layout.module
 
-        for index, resolved in enumerate(
-            module.imports
-        ):
-            old_slot_rva = (
-                resolved.slot_va
-                - image_base
-            )
+        for index, resolved in enumerate(module.imports):
+            old_slot_rva = resolved.slot_va - image_base
 
             if old_slot_rva < 0:
                 raise ValueError(
@@ -482,11 +381,7 @@ def build_iat_relocations(
                     "is below the image base"
                 )
 
-            new_slot_rva = (
-                module_layout.iat_rva
-                + (index * pointer_size)
-            )
-
+            new_slot_rva = module_layout.iat_rva + (index * pointer_size)
             relocations.append(
                 IATRelocation(
                     old_slot_va=resolved.slot_va,
@@ -494,7 +389,7 @@ def build_iat_relocations(
                     new_slot_rva=new_slot_rva,
                     module_name=module.name,
                     function_name=resolved.function_name,
-                    ordinal=resolved.ordinal,
+                    ordinal=resolved.ordinal
                 )
             )
 

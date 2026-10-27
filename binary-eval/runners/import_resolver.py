@@ -1,4 +1,5 @@
 # binary-eval/runners/import_resolver.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -104,42 +105,25 @@ class ResolvedImport:
 
 
 class ImportResolver:
-    def __init__(
-        self,
-        modules: tuple[ModuleInfo, ...],
-    ):
+    def __init__(self, modules: tuple[ModuleInfo, ...]):
         self.modules = modules
+        self._exports: dict[str, dict[int, tuple[str | None, int]]] = {}
 
-        self._exports: dict[
-            str,
-            dict[int, tuple[str | None, int]]
-        ] = {}
-
-    def find_module(
-        self,
-        target_va: int,
-    ) -> ModuleInfo | None:
-
+    def find_module(self, target_va: int) -> ModuleInfo | None:
         for module in self.modules:
             if module.base <= target_va < module.end:
                 return module
 
         return None
 
-    def resolve_thunk(
-        self,
-        thunk: Thunk,
-    ) -> ResolvedImport:
-
+    def resolve_thunk(self, thunk: Thunk) -> ResolvedImport:
         if thunk.status != ThunkStatus.VALID_EXTERNAL:
             raise ImportResolutionError(
                 f"Thunk at 0x{thunk.slot_va:X} "
                 "is not a valid external thunk"
             )
 
-        module = self.find_module(
-            thunk.target_va
-        )
+        module = self.find_module(thunk.target_va)
 
         if module is None:
             raise ImportResolutionError(
@@ -147,23 +131,10 @@ class ImportResolver:
                 f"target 0x{thunk.target_va:X}"
             )
 
-        target_rva = (
-            thunk.target_va
-            - module.base
-        )
-
-        module_path = self._resolve_module_path(
-            module
-        )
-
-        export_map = self._load_exports(
-            module,
-            module_path,
-        )
-
-        export = export_map.get(
-            target_rva
-        )
+        target_rva = thunk.target_va - module.base
+        module_path = self._resolve_module_path(module)
+        export_map = self._load_exports(module, module_path)
+        export = export_map.get(target_rva)
 
         if export is None:
             function_name = None
@@ -177,93 +148,49 @@ class ImportResolver:
             module_name=module.name,
             target_rva=target_rva,
             function_name=function_name,
-            ordinal=ordinal,
+            ordinal=ordinal
         )
 
-    def _load_exports(
-        self,
-        module: ModuleInfo,
-        module_path: str | Path,
-    ) -> dict[int, tuple[str | None, int]]:
-
+    def _load_exports(self, module: ModuleInfo, module_path: str | Path) -> dict[int, tuple[str | None, int]]:
         module_key = module.name.lower()
-
-        cached = self._exports.get(
-            module_key
-        )
+        cached = self._exports.get(module_key)
 
         if cached is not None:
             return cached
 
-        module_path = Path(
-            module_path
-        )
+        module_path = Path(module_path)
 
         if not module_path.exists():
-            raise ImportResolutionError(
-                f"Module file does not exist: "
-                f"{module_path}"
-            )
+            raise ImportResolutionError(f"Module file does not exist: " f"{module_path}")
 
         try:
-            pe = pefile.PE(
-                str(module_path),
-                fast_load=False,
-            )
+            pe = pefile.PE(str(module_path), fast_load=False)
         except pefile.PEFormatError as exc:
-            raise ImportResolutionError(
-                f"Unable to parse exports from "
-                f"{module_path}"
-            ) from exc
+            raise ImportResolutionError(f"Unable to parse exports from " f"{module_path}") from exc
 
-        exports: dict[
-            int,
-            tuple[str | None, int]
-        ] = {}
+        exports: dict[int, tuple[str | None, int]] = {}
 
-        if not hasattr(
-            pe,
-            "DIRECTORY_ENTRY_EXPORT",
-        ):
+        if not hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
             pe.close()
-
-            self._exports[
-                module_key
-            ] = exports
-
+            self._exports[module_key] = exports
             return exports
 
         for symbol in pe.DIRECTORY_ENTRY_EXPORT.symbols:
-
             export_rva = symbol.address
 
             if symbol.name is None:
                 function_name = None
             else:
-                function_name = symbol.name.decode(
-                    errors="replace"
-                )
+                function_name = symbol.name.decode(errors="replace")
 
-            exports[
-                export_rva
-            ] = (
-                function_name,
-                symbol.ordinal,
-            )
+            exports[export_rva] = (function_name, symbol.ordinal)
 
         pe.close()
-
-        self._exports[
-            module_key
-        ] = exports
+        self._exports[module_key] = exports
 
         return exports
 
-    def _resolve_module_path(
-        self,
-        module: ModuleInfo,
-    ) -> Path:
-
+    def _resolve_module_path(self, module: ModuleInfo) -> Path:
         module_name = module.name
 
         if not module_name.lower().endswith(".dll"):
@@ -278,7 +205,4 @@ class ImportResolver:
             if candidate.exists():
                 return candidate
 
-        raise ImportResolutionError(
-            f"Unable to locate module file for "
-            f"{module.name}"
-        )
+        raise ImportResolutionError(f"Unable to locate module file for " f"{module.name}")

@@ -67,6 +67,7 @@ Workflow:
 class MemoryDumpError(RuntimeError):
     pass
 
+
 @dataclass(frozen=True)
 class MemoryDumpResult:
     path: Path
@@ -89,47 +90,26 @@ class MemoryDumper:
     at the confirmed OEP.
     '''
 
-    def __init__(
-        self,
-        debugger: CdbDebugger,
-    ):
+    def __init__(self, debugger: CdbDebugger):
         self.debugger = debugger
 
-    def dump_image(
-        self,
-        output_path: Path | str,
-        start_va: int,
-        end_va: int,
-    ) -> MemoryDumpResult:
-
+    def dump_image(self, output_path: Path | str, start_va: int, end_va: int) -> MemoryDumpResult:
         output_path = Path(output_path)
 
         if end_va <= start_va:
-            raise ValueError(
-                "end_va must be greater than start_va"
-            )
+            raise ValueError("end_va must be greater than start_va")
 
         expected_size = end_va - start_va
 
-        output_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if output_path.exists():
             output_path.unlink()
 
-        self.debugger.write_memory(
-            output_path=output_path,
-            start_va=start_va,
-            end_va=end_va,
-        )
+        self.debugger.write_memory(output_path=output_path, start_va=start_va, end_va=end_va)
 
         if not output_path.exists():
-            raise MemoryDumpError(
-                f"Memory dump was not created: "
-                f"{output_path}"
-            )
+            raise MemoryDumpError(f"Memory dump was not created: " f"{output_path}")
 
         actual_size = output_path.stat().st_size
 
@@ -146,5 +126,5 @@ class MemoryDumper:
             path=output_path,
             start_va=start_va,
             end_va=end_va,
-            size=expected_size,
+            size=expected_size
         )

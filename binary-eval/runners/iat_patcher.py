@@ -122,10 +122,7 @@ class UnpackerRegion:
     section_rva: int
     section_end_rva: int
 
-    def contains(
-        self,
-        rva: int,
-    ) -> bool:
+    def contains(self, rva: int) -> bool:
 
         return (
             self.section_rva
@@ -172,22 +169,14 @@ class IATReferencePatcher:
         referenced_slots: set[int] = set()
 
         for section in self.pe.sections:
-            if not self._should_scan_section(
-                section
-            ):
+            if not self._should_scan_section(section):
                 continue
 
-            section_rva = (
-                section.VirtualAddress
-            )
+            section_rva = (section.VirtualAddress)
 
-            section_raw_offset = (
-                section.PointerToRawData
-            )
+            section_raw_offset = (section.PointerToRawData)
 
-            section_raw_size = (
-                section.SizeOfRawData
-            )
+            section_raw_size = (section.SizeOfRawData)
 
             if section_raw_size == 0:
                 continue
@@ -210,12 +199,10 @@ class IATReferencePatcher:
                 ]
             )
 
-            for instruction in (
-                self.disassembler.disasm(
+            for instruction in self.disassembler.disasm(
                     section_data,
                     section_rva,
-                )
-            ):
+                ):
                 self._patch_instruction(
                     output_data=output_data,
                     instruction=instruction,
@@ -267,9 +254,7 @@ class IATReferencePatcher:
                 + memory.disp
             )
 
-            relocation = relocation_map.get(
-                old_target_rva
-            )
+            relocation = relocation_map.get(old_target_rva)
 
             if relocation is None:
                 continue
@@ -283,9 +268,7 @@ class IATReferencePatcher:
                 patches=patches,
             )
 
-            referenced_slots.add(
-                relocation.old_slot_rva
-            )
+            referenced_slots.add(relocation.old_slot_rva)
 
             break
 
