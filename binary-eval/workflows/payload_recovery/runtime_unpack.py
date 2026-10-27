@@ -1,5 +1,4 @@
 # binary-eval/workflows/payload_recovery/runtime_unpack.py
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,6 +12,116 @@ from runners.import_resolver import ResolvedImport
 from runners.post_oep_recovery import PostOEPRecovery
 from runners.reconstruction import ReconstructionResult
 
+
+'''
+UPX Runtime Unpacking Workflow
+
+Packed entry point: Identify the UPX entry point and verify that the loader
+begins with PUSH RBX.
+
+Stack sentinel: Track the saved RBX value using a hardware access breakpoint
+to detect when the UPX loader restores the original execution context.
+
+Stub exit detection: Identify the direct JMP transferring execution from
+the UPX loader section into the reconstructed executable section.
+
+OEP confirmation: Execute the stub-exit JMP and verify that execution reaches
+the recovered original entry point.
+
+Post-OEP recovery: Invoke the shared recovery workflow to dump the unpacked
+image, analyze and resolve imports, and reconstruct the executable.
+
+
+Packed executable entry point
+        |
+        v
+Parse PE headers and section metadata
+        |
+        v
+Launch executable under CDB
+        |
+        v
+Identify loaded image base and packed entry point
+        |
+        v
+Install breakpoint at packed entry point
+        |
+        v
+Verify execution reaches packed entry point
+        |
+        v
+Validate initial PUSH RBX instruction
+        |
+        v
+Record original RSP and RBX
+        |
+        v
+Single-step PUSH RBX
+        |
+        v
+Verify RSP decreases by 8 bytes
+        |
+        v
+Validate saved RBX value on stack
+        |
+        v
+Install hardware access breakpoint on saved RBX
+        |
+        v
+Monitor UPX loader execution
+        |
+        v
+Detect matching POP RBX
+        |
+        v
+Verify original RSP and RBX are restored
+        |
+        v
+Locate direct stub-exit JMP
+        |
+        v
+Verify JMP originates in UPX loader section
+        |
+        v
+Verify JMP targets a different executable section
+        |
+        v
+Install breakpoint at stub-exit JMP
+        |
+        v
+Confirm execution reaches stub-exit JMP
+        |
+        v
+Validate live JMP instruction and destination
+        |
+        v
+Single-step stub-exit JMP
+        |
+        v
+Confirm execution transfers to recovered OEP
+        |
+        v
+Verify OEP resides in reconstructed section
+        |
+        v
+Calculate OEP RVA from loaded image base
+        |
+        v
+Invoke shared PostOEPRecovery workflow
+        |
+        v
+Dump unpacked executable image from memory
+        |
+        v
+Analyze and resolve reconstructed imports
+        |
+        v
+Reconstruct executable on disk
+        |
+        v
+Return recovered OEP, IAT, and reconstruction metadata
+
+'''
 
 class RuntimeUnpackError(RuntimeError):
     pass

@@ -1,4 +1,14 @@
-"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import pefile
+
+from runners.debugger import CdbDebugger
+from workflows.payload_recovery.runtime_decrypt import RuntimeDecryptor
+
+'''
 End-to-end Hyperion runtime decryption and post-OEP recovery test.
 
 Tests:
@@ -15,22 +25,13 @@ Tests:
 
 The debugger must remain paused at the OEP.
 
+
 Usage:
     python test_hyperion_post_oep.py --sample bind_shell --mode dump
     python test_hyperion_post_oep.py --sample bind_shell --mode full
     python test_hyperion_post_oep.py --sample ransomware --mode dump
     python test_hyperion_post_oep.py --sample both --mode full
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-import pefile
-
-from runners.debugger import CdbDebugger
-from workflows.payload_recovery.runtime_decrypt import RuntimeDecryptor
+'''
 
 
 # ----------------------------------------------------------
