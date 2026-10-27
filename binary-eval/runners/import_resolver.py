@@ -1,17 +1,77 @@
 # binary-eval/runners/import_resolver.py
 
 '''
-import_resolver.py
-    raw thunk
-        ↓
-    ResolvedImport
-        - slot_va
-        - target_va
-        - module_name
-        - target_rva
-        - function_name
-        - ordinal
+Runtime Import Thunk Validation and Symbol Resolution
+
+Purpose:
+    Validate previously identified external IAT thunks and resolve their
+    runtime target addresses to imported DLL functions or ordinals.
+
+    This stage connects runtime IAT discovery with PE import reconstruction
+    by converting validated memory references into structured import records.
+
+Responsibilities:
+    1. Receive candidate thunks previously classified by the IAT analyzer.
+    2. Reject thunks not classified as valid external imports.
+    3. Identify the loaded module containing each thunk's target address.
+    4. Calculate the target RVA relative to the loaded module's base address.
+    5. Locate the corresponding DLL file on disk.
+    6. Parse the DLL's PE export directory using pefile.
+    7. Construct and cache mappings of exported function RVAs.
+    8. Match runtime target RVAs against exported function addresses.
+    9. Recover exported function names and ordinals when available.
+    10. Return structured ResolvedImport records for import reconstruction.
+
+Input:
+    - Validated IAT thunks from iat.py.
+    - Runtime target virtual addresses stored in IAT slots.
+    - Loaded-module information from the debugger.
+    - DLL files containing the corresponding export directories.
+
+Output:
+    - ResolvedImport records containing:
+        - Original IAT slot virtual address.
+        - Runtime target virtual address.
+        - Target module name.
+        - Target RVA within the module.
+        - Exported function name, when resolved.
+        - Export ordinal, when resolved.
+
+Workflow:
+    Receive validated IAT thunk
+        |
+        v
+    Verify thunk is classified VALID_EXTERNAL
+        |
+        v
+    Locate module containing target VA
+        |
+        v
+    Calculate target RVA relative to module base
+        |
+        v
+    Locate corresponding DLL on disk
+        |
+        v
+    Load and parse DLL export directory
+        |
+        v
+    Build or retrieve cached export mappings
+        |
+        v
+    Match target RVA against exported function RVAs
+        |
+        v
+    Recover function name and ordinal if available
+        |
+        v
+    Construct ResolvedImport record
+        |
+        v
+    Pass resolved import to import_rebuilder.py
+
 '''
+
 
 from __future__ import annotations
 

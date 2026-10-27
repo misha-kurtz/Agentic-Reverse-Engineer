@@ -1,22 +1,52 @@
 # binary-eval/runners/iat.py 
 
 '''
-Import Address Table Reconstruction
+Runtime Import Address Table (IAT) Discovery and Validation
 
-debugger.py
-    ↓
-OEP + module map
+Purpose:
+    Discover and validate the original IAT within the decrypted payload's
+    memory image before reconstructing its import structures.
 
-iat.py
-    ├── discover candidate IAT ranges
-    ├── read thunk values
-    ├── resolve target modules
-    ├── score candidate
-    └── prune invalid thunks
+Responsibilities:
+    1. Scan the decrypted image for candidate IAT ranges.
+    2. Read pointer-sized thunk values from live process memory.
+    3. Resolve thunk targets against the debugger's loaded-module map.
+    4. Classify entries as valid external, invalid internal, unresolved, or NULL.
+    5. Identify contiguous clusters of valid external imports.
+    6. Recover probable IAT boundaries and analyze candidate ranges.
+    7. Score candidates and select the strongest IAT candidate.
+    8. Return validated external thunks for subsequent import resolution.
 
-pe_sieve.py / reconstruction.py
-    ↓
-actually rebuild PE
+Input:
+    - Live process memory through the debugger.
+    - Decrypted image start and end addresses.
+    - Loaded-module address ranges.
+
+Output:
+    - Selected IAT candidate and its memory boundaries.
+    - Validated import thunk addresses and resolved target modules.
+
+Workflow:
+    Decrypted payload in memory
+        |
+        v
+    Scan for candidate IAT ranges
+        |
+        v
+    Read and classify thunk targets
+        |
+        v
+    Validate targets against loaded modules
+        |
+        v
+    Recover candidate boundaries
+        |
+        v
+    Score and select strongest candidate
+        |
+        v
+    Return validated thunks for import resolution
+
 '''
 
 from __future__ import annotations

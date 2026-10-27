@@ -1,16 +1,60 @@
 # binary-eval/runners/import_rebuilder.py
 
 '''
-import_rebuilder.py
-    list[ResolvedImport]
-        ↓
-    group by module
-        ↓
-    prepare import descriptors / thunk arrays / names
-        ↓
-    write rebuilt import structures into reconstructed PE
+PE Import Address Table (IAT) Structure Reconstruction
+
+Purpose:
+    Reconstruct the PE import structures from previously resolved imports,
+    producing a new import section and a mapping between original and
+    reconstructed IAT slots.
+
+Responsibilities:
+    1. Group resolved imports by their associated DLL modules.
+    2. Normalize module names and organize imported functions.
+    3. Calculate the layout of the reconstructed import section.
+    4. Allocate space for IMAGE_IMPORT_DESCRIPTOR structures.
+    5. Construct DLL name strings and IMAGE_IMPORT_BY_NAME structures.
+    6. Construct Import Name Table (INT) thunk arrays.
+    7. Construct Import Address Table (IAT) thunk arrays.
+    8. Encode imports by function name or ordinal.
+    9. Generate relocation mappings from original IAT slots to new IAT slots.
+
+Input:
+    - Resolved imports containing module names, function names, or ordinals.
+    - Target import-section RVA.
+    - Image base and pointer size.
+
+Output:
+    - Reconstructed import-section bytes.
+    - Import descriptor, INT, IAT, and name structure layout.
+    - Original-to-reconstructed IAT slot relocation mappings.
+
+Workflow:
+    Validated and resolved imports
+        |
+        v
+    Group imports by DLL
+        |
+        v
+    Calculate import-section layout
+        |
+        v
+    Construct IMAGE_IMPORT_DESCRIPTOR entries
+        |
+        v
+    Write DLL and imported-function names
+        |
+        v
+    Construct INT and IAT thunk arrays
+        |
+        v
+    Generate old-to-new IAT slot mappings
+        |
+        v
+    Return reconstructed import data and relocation mappings
 
 '''
+
 from __future__ import annotations
 from dataclasses import dataclass
 from collections import defaultdict

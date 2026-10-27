@@ -1,5 +1,69 @@
 # binary-eval/runners/iat_patcher.py
 
+'''
+Executable IAT Reference Patching
+
+Purpose:
+    Repair executable instructions that reference original IAT slots
+    after the PE import structures have been reconstructed.
+
+Responsibilities:
+    1. Identify executable sections in the reconstructed PE.
+    2. Exclude the runtime-identified unpacker section from scanning.
+    3. Disassemble executable section bytes using Capstone.
+    4. Identify instructions containing RIP-relative memory operands.
+    5. Calculate the original IAT slot referenced by each instruction.
+    6. Match original slot RVAs against the IAT relocation mappings.
+    7. Calculate new RIP-relative displacements for reconstructed IAT slots.
+    8. Validate that replacement displacements fit signed 32-bit encoding.
+    9. Patch instruction displacement bytes in the reconstructed PE.
+    10. Record patched instructions and referenced original IAT slots.
+
+Input:
+    - Reconstructed PE image and mutable output bytes.
+    - Original-to-reconstructed IAT slot relocation mappings.
+    - Optional runtime-identified unpacker region.
+
+Output:
+    - Updated executable instruction bytes.
+    - Records of original and replacement IAT references.
+    - Set of original IAT slots referenced by patched instructions.
+
+Workflow:
+    Reconstructed PE and IAT relocation mappings
+        |
+        v
+    Identify executable sections
+        |
+        v
+    Exclude runtime unpacker section
+        |
+        v
+    Disassemble executable instructions
+        |
+        v
+    Identify RIP-relative memory references
+        |
+        v
+    Match references against original IAT slots
+        |
+        v
+    Calculate new RIP-relative displacements
+        |
+        v
+    Validate signed 32-bit displacement range
+        |
+        v
+    Patch instruction displacement bytes
+        |
+        v
+    Return patched-reference records
+
+
+Note: Only supported RIP-relative memory references are patched.
+'''
+
+
 from __future__ import annotations
 from dataclasses import dataclass
 import struct

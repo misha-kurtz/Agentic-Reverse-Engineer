@@ -1,15 +1,98 @@
 # binary-eval/runners/reconstruction.py
 
 '''
-Reconstruct the Portable Executable from memory
+Portable Executable (PE) Reconstruction from Decrypted Memory
 
-memory dump
-+ original PE metadata
-+ image base
-+ OEP RVA
-+ selected IAT
-        ↓
-recovered.exe
+Purpose:
+    Convert the decrypted PE memory image into a reconstructed disk-layout
+    executable, restoring its entry point, section layout, import structures,
+    and executable references to relocated IAT entries.
+
+Responsibilities:
+    1. Load the decrypted memory dump and parse its PE headers.
+    2. Validate the recovered Original Entry Point (OEP) RVA.
+    3. Preserve the existing PE headers.
+    4. Calculate file-aligned raw offsets for the original PE sections.
+    5. Copy mapped section contents into the reconstructed disk layout.
+    6. Update section headers with new raw offsets and sizes.
+    7. Restore AddressOfEntryPoint to the recovered OEP RVA.
+    8. Calculate the RVA and layout of the replacement import section.
+    9. Invoke the import rebuilder to construct new import structures.
+    10. Append the reconstructed .scy import section.
+    11. Update NumberOfSections, SizeOfImage, and the Import Directory.
+    12. Generate mappings between original and reconstructed IAT slots.
+    13. Invoke the IAT patcher to repair RIP-relative import references.
+    14. Write the reconstructed PE executable to disk.
+    15. Validate the output PE structure and recovered entry point.
+
+Input:
+    - Decrypted PE memory dump.
+    - Confirmed recovered OEP RVA.
+    - Previously resolved imports, when import reconstruction is requested.
+    - Runtime image base for original IAT slot relocation calculations.
+    - Optional unpacker entry and exit RVAs for excluding unpacker code.
+
+Output:
+    - Reconstructed PE executable with a disk-compatible section layout.
+    - Restored AddressOfEntryPoint.
+    - Rebuilt import structures in the .scy section, when requested.
+    - Patched RIP-relative IAT references, when applicable.
+    - ReconstructionResult containing section metadata and patch results.
+
+Workflow:
+    Decrypted PE memory dump
+        |
+        v
+    Parse and validate PE headers
+        |
+        v
+    Validate recovered OEP RVA
+        |
+        v
+    Calculate disk-layout section offsets
+        |
+        v
+    Copy mapped sections into raw file layout
+        |
+        v
+    Restore AddressOfEntryPoint
+        |
+        v
+    Update original section headers
+        |
+        v
+    Receive previously resolved imports
+        |
+        v
+    Calculate replacement import-section layout
+        |
+        v
+    Invoke import_rebuilder.py
+        |
+        v
+    Append reconstructed .scy section
+        |
+        v
+    Update PE headers and Import Directory
+        |
+        v
+    Generate original-to-new IAT slot mappings
+        |
+        v
+    Invoke iat_patcher.py
+        |
+        v
+    Repair RIP-relative IAT references
+        |
+        v
+    Write reconstructed PE to disk
+        |
+        v
+    Validate PE structure and recovered OEP
+        |
+        v
+    Return ReconstructionResult
+
 '''
 
 # binary-eval/runners/reconstruction.py

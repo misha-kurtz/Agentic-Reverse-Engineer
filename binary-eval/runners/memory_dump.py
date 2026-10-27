@@ -1,4 +1,62 @@
 # binary-eval/runners/memory_dump.py
+
+'''
+Runtime Memory Image Acquisition for Payload Recovery
+
+Purpose:
+    Capture the decrypted PE image directly from live process memory
+    after execution has reached the confirmed Original Entry Point (OEP).
+
+Responsibilities:
+    1. Receive the confirmed memory boundaries of the decrypted image.
+    2. Calculate the expected memory dump size.
+    3. Prepare the output directory and destination file.
+    4. Invoke the debugger to dump the specified memory region.
+    5. Verify that the memory dump was successfully created.
+    6. Validate the dumped file size against the expected image size.
+    7. Return the dump path, memory boundaries, and captured image size.
+
+Input:
+    - Active CDB debugger session.
+    - Confirmed decrypted image start and end virtual addresses.
+    - Destination path for the memory dump.
+
+Output:
+    - Raw memory dump containing the mapped PE image.
+    - MemoryDumpResult with dump path, address range, and image size.
+
+Workflow:
+    Confirmed OEP reached
+        |
+        v
+    Receive decrypted image boundaries
+        |
+        v
+    Calculate expected dump size
+        |
+        v
+    Prepare output destination
+        |
+        v
+    Invoke CDB memory dump
+        |
+        v
+    Capture mapped PE image
+        |
+        v
+    Verify dump file exists
+        |
+        v
+    Validate captured image size
+        |
+        v
+    Return MemoryDumpResult
+        |
+        v
+    Pass memory dump to PE reconstruction
+
+'''
+
 from __future__ import annotations
 
 from dataclasses import dataclass

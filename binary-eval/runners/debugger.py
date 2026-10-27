@@ -1,5 +1,10 @@
 # binary-eval/runners/debugger.py
 
+'''
+WinDbg/ConsoleDbg Runner for Automated Payload Recovery 
+'''
+
+
 from __future__ import annotations
 
 import queue
@@ -13,9 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-'''
-WinDbg/ConsoleDbg Runner for Automated Payload Recovery 
-'''
+
 
 
 class DebuggerError(RuntimeError):
