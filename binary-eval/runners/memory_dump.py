@@ -1,5 +1,12 @@
 # binary-eval/runners/memory_dump.py
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from runners.debugger import CdbDebugger
+
 '''
 Runtime Memory Image Acquisition for Payload Recovery
 
@@ -57,17 +64,8 @@ Workflow:
 
 '''
 
-from __future__ import annotations
-
-from dataclasses import dataclass
-from pathlib import Path
-
-from runners.debugger import CdbDebugger
-
-
 class MemoryDumpError(RuntimeError):
     pass
-
 
 @dataclass(frozen=True)
 class MemoryDumpResult:

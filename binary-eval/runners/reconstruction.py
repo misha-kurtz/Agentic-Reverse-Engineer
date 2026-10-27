@@ -1,4 +1,27 @@
 # binary-eval/runners/reconstruction.py
+# binary-eval/runners/reconstruction.py
+
+from __future__ import annotations
+
+import struct
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pefile
+
+from runners.iat_patcher import (
+    IATPatchResult,
+    IATReferencePatcher,
+    UnpackerRegion,
+)
+
+from runners.import_rebuilder import (
+    ImportModule,
+    build_iat_relocations,
+    build_import_section,
+    calculate_layout,
+)
 
 '''
 Portable Executable (PE) Reconstruction from Decrypted Memory
@@ -94,30 +117,6 @@ Workflow:
     Return ReconstructionResult
 
 '''
-
-# binary-eval/runners/reconstruction.py
-
-from __future__ import annotations
-
-import struct
-
-from dataclasses import dataclass
-from pathlib import Path
-
-import pefile
-
-from runners.iat_patcher import (
-    IATPatchResult,
-    IATReferencePatcher,
-    UnpackerRegion,
-)
-
-from runners.import_rebuilder import (
-    ImportModule,
-    build_iat_relocations,
-    build_import_section,
-    calculate_layout,
-)
 
 
 class ReconstructionError(RuntimeError):

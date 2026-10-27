@@ -1,5 +1,22 @@
 # binary-eval/runners/iat_patcher.py
 
+from __future__ import annotations
+from dataclasses import dataclass
+import struct
+import pefile
+from capstone import (
+    Cs,
+    CS_ARCH_X86,
+    CS_MODE_64,
+)
+
+from capstone.x86_const import (
+    X86_OP_MEM,
+    X86_REG_RIP,
+)
+
+from runners.import_rebuilder import IATRelocation
+
 '''
 Executable IAT Reference Patching
 
@@ -62,25 +79,6 @@ Workflow:
 
 Note: Only supported RIP-relative memory references are patched.
 '''
-
-
-from __future__ import annotations
-from dataclasses import dataclass
-import struct
-import pefile
-from capstone import (
-    Cs,
-    CS_ARCH_X86,
-    CS_MODE_64,
-)
-
-from capstone.x86_const import (
-    X86_OP_MEM,
-    X86_REG_RIP,
-)
-
-from runners.import_rebuilder import IATRelocation
-
 
 class IATPatchError(RuntimeError):
     pass

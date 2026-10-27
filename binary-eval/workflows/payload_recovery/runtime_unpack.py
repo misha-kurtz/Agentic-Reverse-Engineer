@@ -1,5 +1,19 @@
 # binary-eval/workflows/payload_recovery/runtime_unpack.py
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pefile
+
+from runners.debugger import CdbDebugger, DebuggerError, DirectJump, Instruction, ModuleInfo
+from runners.iat import IATAnalysisResult, Thunk
+from runners.import_resolver import ResolvedImport
+from runners.post_oep_recovery import PostOEPRecovery
+from runners.reconstruction import ReconstructionResult
+
+
 '''
 UPX Runtime Unpacking Workflow
 
@@ -109,21 +123,6 @@ Reconstruct executable on disk
 Return recovered OEP, IAT, and reconstruction metadata
 
 '''
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from pathlib import Path
-
-import pefile
-
-from runners.debugger import CdbDebugger, DebuggerError, DirectJump, Instruction, ModuleInfo
-from runners.iat import IATAnalysisResult, Thunk
-from runners.import_resolver import ResolvedImport
-from runners.post_oep_recovery import PostOEPRecovery
-from runners.reconstruction import ReconstructionResult
-
-
 
 class RuntimeUnpackError(RuntimeError):
     pass

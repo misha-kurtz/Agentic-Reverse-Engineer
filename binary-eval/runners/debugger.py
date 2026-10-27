@@ -1,10 +1,5 @@
 # binary-eval/runners/debugger.py
 
-'''
-WinDbg/ConsoleDbg Runner for Automated Payload Recovery 
-'''
-
-
 from __future__ import annotations
 
 import queue
@@ -18,8 +13,111 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+'''
+WinDbg/ConsoleDbg Interface for Automated Payload Recovery 
 
+Purpose:
+    Provide a reusable Python interface to the Windows Console Debugger
+    (CDB) for controlling executable execution, inspecting process memory,
+    managing breakpoints, and disassembling instructions.
 
+    This module serves as the debugging foundation for runtime payload
+    recovery, exposing debugger operations to higher-level analysis modules.
+
+Responsibilities:
+    1. Launch target executables under CDB with child-process debugging.
+    2. Manage the debugger subprocess and its lifecycle.
+    3. Send debugger commands and capture their output.
+    4. Detect debugger prompts and enforce command timeouts.
+    5. Continue execution and perform single-instruction stepping.
+    6. Read individual CPU registers and register collections.
+    7. Enumerate loaded modules and retrieve their memory boundaries.
+    8. Install software execution and hardware memory-access breakpoints.
+    9. List and clear existing debugger breakpoints.
+    10. Read individual and consecutive 64-bit memory values.
+    11. Dump specified process memory regions using CDB.
+    12. Disassemble instructions at specified virtual addresses.
+    13. Validate decoded instruction addresses, sizes, and raw bytes.
+    14. Retrieve preceding instructions and iterate sequential disassembly.
+    15. Resolve supported direct relative JMP destinations.
+    16. Retrieve the process identifier of the active debuggee.
+    17. Parse debugger output into structured Python objects.
+
+Input:
+    - Path to the CDB executable.
+    - Target executable and optional command-line arguments.
+    - Debugger commands and execution-control requests.
+    - Virtual addresses for memory inspection and disassembly.
+    - Register names, module names, and breakpoint addresses.
+    - Memory boundaries and output paths for memory dumping.
+
+Output:
+    - Active debugger session with execution-control capabilities.
+    - CPU register values and process information.
+    - Loaded-module metadata through ModuleInfo.
+    - Disassembled instructions through Instruction.
+    - Direct branch information through DirectJump.
+    - Raw memory values and process memory dumps.
+    - Debugger command output and diagnostic errors.
+
+Workflow:
+    Receive CDB path and target executable
+        |
+        v
+    Launch executable under CDB
+        |
+        v
+    Initialize debugger subprocess
+        |
+        v
+    Start asynchronous output reader
+        |
+        v
+    Wait for initial debugger prompt
+        |
+        v
+    Establish active debugging session
+        |
+        v
+    Execute requested debugger operations
+        |
+        +-----------------------------------+
+        |                 |                 |
+        v                 v                 v
+    Execution         Memory and        Disassembly
+    Control           Registers         and Modules
+        |                 |                 |
+        v                 v                 v
+    Continue / Step   Read / Dump       Decode / Parse
+    Breakpoints       Inspect State     Validate Bytes
+        |                 |                 |
+        +-----------------+-----------------+
+                          |
+                          v
+    Parse and validate debugger output
+                          |
+                          v
+    Return structured results to calling modules
+                          |
+                          v
+    Support runtime payload recovery operations
+                          |
+                          v
+    Close debugger session when complete
+
+This module provides the low-level debugging interface used by the
+higher-level payload recovery components.
+
+It does not independently discover the Original Entry Point (OEP),
+identify decrypted payload boundaries, reconstruct control-flow graphs,
+discover or resolve IAT entries, or rebuild executable PE structures.
+
+Those responsibilities belong to the corresponding analysis and
+reconstruction modules.
+
+The debugger interface is independent of any specific executable
+packer and can be reused across different runtime analysis workflows.
+'''
 
 class DebuggerError(RuntimeError):
     pass

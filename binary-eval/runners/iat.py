@@ -1,5 +1,12 @@
 # binary-eval/runners/iat.py 
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Iterable, Protocol
+from runners.debugger import ModuleInfo
+
 '''
 Runtime Import Address Table (IAT) Discovery and Validation
 
@@ -48,14 +55,6 @@ Workflow:
     Return validated thunks for import resolution
 
 '''
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from enum import Enum
-from typing import Iterable, Protocol
-from runners.debugger import ModuleInfo
-
 
 # ----------------------------------------------------------------------
 # Exceptions

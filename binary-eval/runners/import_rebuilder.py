@@ -1,5 +1,13 @@
 # binary-eval/runners/import_rebuilder.py
 
+from __future__ import annotations
+from dataclasses import dataclass
+from collections import defaultdict
+import struct
+
+from runners.import_resolver import ImportResolutionError, ResolvedImport
+
+
 '''
 PE Import Address Table (IAT) Structure Reconstruction
 
@@ -54,13 +62,6 @@ Workflow:
     Return reconstructed import data and relocation mappings
 
 '''
-
-from __future__ import annotations
-from dataclasses import dataclass
-from collections import defaultdict
-import struct
-
-from runners.import_resolver import ImportResolutionError, ResolvedImport
 
 @dataclass(frozen=True)
 class ImportModule:

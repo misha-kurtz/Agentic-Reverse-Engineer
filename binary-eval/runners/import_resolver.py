@@ -1,4 +1,14 @@
 # binary-eval/runners/import_resolver.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pefile
+
+from runners.debugger import ModuleInfo
+from runners.iat import Thunk, ThunkStatus
+
 
 '''
 Runtime Import Thunk Validation and Symbol Resolution
@@ -71,17 +81,6 @@ Workflow:
     Pass resolved import to import_rebuilder.py
 
 '''
-
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from pathlib import Path
-
-import pefile
-
-from runners.debugger import ModuleInfo
-from runners.iat import Thunk, ThunkStatus
 
 
 class ImportResolutionError(RuntimeError):

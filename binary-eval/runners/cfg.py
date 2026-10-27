@@ -1,5 +1,12 @@
 # binary-eval/runners/cfg.py
 
+from dataclasses import dataclass,field
+from collections import deque
+import struct
+
+
+from runners.debugger import Instruction, CdbDebugger, DebuggerError
+
 '''
 Control-Flow-Aware Disassembly and CFG Reconstruction
 
@@ -108,13 +115,6 @@ This module constructs a static CFG from debugger-disassembled code.
 It does not trace actual runtime branch execution, modify instructions,
 or reconstruct the PE executable.
 '''
-
-from dataclasses import dataclass,field
-from collections import deque
-import struct
-
-
-from runners.debugger import Instruction, CdbDebugger, DebuggerError
 
 @dataclass(frozen=True)
 class ControlFlowInfo:

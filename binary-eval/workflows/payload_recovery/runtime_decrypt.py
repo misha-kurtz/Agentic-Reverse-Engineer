@@ -1,5 +1,22 @@
 # binary-eval/workflows/payload_recovery/runtime_decrypt.py
 
+from __future__ import annotations
+import re
+import struct
+
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pefile
+
+from runners.debugger import CdbDebugger, DebuggerError, ModuleInfo
+from runners.cfg import ControlFlowAnalyzer, classify_control_flow
+from runners.iat import Thunk, IATAnalysisResult
+from runners.import_resolver import ResolvedImport
+from runners.post_oep_recovery import PostOEPRecovery
+from runners.reconstruction import ReconstructionResult
+
 '''
 Hyperion Runtime Decryption Workflow
 
@@ -62,23 +79,6 @@ Install hardware execution breakpoint
         v
 Confirm execution reaches OEP
 '''
-
-from __future__ import annotations
-import re
-import struct
-
-from dataclasses import dataclass
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import pefile
-
-from runners.debugger import CdbDebugger, DebuggerError, ModuleInfo
-from runners.cfg import ControlFlowAnalyzer, classify_control_flow
-from runners.iat import Thunk, IATAnalysisResult
-from runners.import_resolver import ResolvedImport
-from runners.post_oep_recovery import PostOEPRecovery
-from runners.reconstruction import ReconstructionResult
 
 class RuntimeDecryptError(RuntimeError):
     pass
