@@ -15,8 +15,6 @@ from workflows.static_analysis import StaticAnalysisWorkflow
 from workflows.dynamic_analysis import DynamicAnalysisWorkflow
 
 
-
-
 class AnalysisController:
     def __init__(
         self,

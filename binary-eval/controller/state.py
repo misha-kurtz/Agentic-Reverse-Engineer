@@ -103,23 +103,10 @@ class AnalysisState:
     recovered_sample_path: PurePosixPath | None = None
     recovered_static_dir: PurePosixPath | None = None
 
-    # Recovered payload static artifact output paths
-    recovered_pe_metadata_path: PurePosixPath | None = None
-    recovered_floss_output_path: PurePosixPath | None = None
-    recovered_capa_output_path: PurePosixPath | None = None
-    recovered_ghidra_output_dir: PurePosixPath | None = None
 
 
 '''
-    recovery_attempted: bool = False
-    recovery_successful: bool = False
-
-    # Recovered sample info
-    recovered_sha256: str | None = None
-    recovered_sample_path: PurePosixPath | None = None
-    recovered_static_dir: PurePosixPath | None = None
-
-    # Recovered static artifact output paths
+    # Recovered payload static artifact output paths
     recovered_pe_metadata_path: PurePosixPath | None = None
     recovered_floss_output_path: PurePosixPath | None = None
     recovered_capa_output_path: PurePosixPath | None = None
@@ -134,5 +121,7 @@ class AnalysisState:
     recovered_capa_upload_complete: bool = False
     recovered_ghidra_analysis_complete: bool = False
     recovered_ghidra_upload_complete: bool = False
+
+
 '''
     

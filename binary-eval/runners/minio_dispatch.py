@@ -38,7 +38,7 @@ class MinioDispatchRunner:
 
         object_path = (
             f"datapool-dispatch/"
-            f"samples-staging/"
+            f"samples/"
             f"{sample_id}/{sample_variant}/"
             f"{sha256}/sample.bin"
         )
