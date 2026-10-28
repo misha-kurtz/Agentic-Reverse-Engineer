@@ -1,8 +1,8 @@
 # binary-eval/runners/vmware.py
+
 import time
 import os
 import subprocess
-import time
 import base64
 from pathlib import Path
 
@@ -21,16 +21,10 @@ class VMwareRunner:
         self.vmrun_path = vmrun_path
 
         if not self.guest_password:
-            raise RuntimeError(
-                f"{password_env_var} environment variable is not set"
-            )
+            raise RuntimeError(f"{password_env_var} environment variable is not set")
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
-        command = [
-            self.vmrun_path,
-            "-T", "ws",
-            *args,
-        ]
+        command = [self.vmrun_path, "-T", "ws", *args]
 
         result = subprocess.run(
             command,
@@ -48,9 +42,9 @@ class VMwareRunner:
         return result
 
     def start(self, nogui: bool = True) -> None:
-        """
+        '''
         Start the VM if it is not already running.
-        """
+        '''
         if self.is_running():
             return
 
@@ -62,14 +56,10 @@ class VMwareRunner:
         self._run(args)
 
     def check_tools(self) -> bool:
-        """
+        '''
         Check whether VMware Tools is running in the guest.
-        """
-        result = self._run([
-            "checkToolsState",
-            self.vmx_path,
-        ])
-
+        '''
+        result = self._run(["checkToolsState", self.vmx_path])
         return "running" in result.stdout.lower()
 
     def wait_for_guest(
@@ -84,9 +74,7 @@ class VMwareRunner:
         while time.time() < deadline:
             try:
                 if shell == "windows":
-                    self.run_program(
-                        r"C:\Windows\System32\whoami.exe"
-                    )
+                    self.run_program(r"C:\Windows\System32\whoami.exe")
                 else:
                     self.run_bash("true")
 
@@ -106,7 +94,6 @@ class VMwareRunner:
         timeout: int = 60,
         interval: int = 2,
     ) -> None:
-
         deadline = time.time() + timeout
 
         while time.time() < deadline:
@@ -122,16 +109,14 @@ class VMwareRunner:
             except RuntimeError:
                 time.sleep(interval)
 
-        raise RuntimeError(
-            "Windows interactive desktop did not become ready"
-        )
+        raise RuntimeError("Windows interactive desktop did not become ready")
 
     def run_bash(self, command: str) -> str:
-        """
+        '''
         Execute a Bash command inside the guest.
 
         Requires VMware Tools / open-vm-tools to be running.
-        """
+        '''
         result = self._run([
             "-gu", self.guest_username,
             "-gp", self.guest_password,
@@ -148,7 +133,6 @@ class VMwareRunner:
         program_path: str,
         arguments: list[str] | None = None,
     ) -> str:
-
         args = [
             "-gu", self.guest_username,
             "-gp", self.guest_password,
@@ -161,30 +145,20 @@ class VMwareRunner:
             args.extend(arguments)
 
         result = self._run(args)
-
         return result.stdout
 
-    
-
     def run_powershell(self, command: str) -> str:
-        encoded_command = base64.b64encode(
-            command.encode("utf-16le")
-        ).decode("ascii")
+        encoded_command = base64.b64encode(command.encode("utf-16le")).decode("ascii")
 
         return self.run_program(
             r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-            [
-                "-NoProfile",
-                "-NonInteractive",
-                "-EncodedCommand",
-                encoded_command,
-            ],
+            ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_command],
         )
 
     def copy_from_guest(self, guest_path: str, host_path: str) -> None:
-        """
+        '''
         Copy a file from the guest VM to the physical host.
-        """
+        '''
         self._run([
             "-gu", self.guest_username,
             "-gp", self.guest_password,
@@ -194,16 +168,27 @@ class VMwareRunner:
             host_path,
         ])
 
+    def copy_to_guest(self, host_path: str, guest_path: str) -> None:
+        '''
+        Copy a file from the physical host to the guest VM.
+
+        Requires VMware Tools to be running in the guest.
+        '''
+        self._run([
+            "-gu", self.guest_username,
+            "-gp", self.guest_password,
+            "copyFileFromHostToGuest",
+            self.vmx_path,
+            host_path,
+            guest_path,
+        ])
+
     def is_running(self) -> bool:
-        """
+        '''
         Check if the VM is currently running.
-        """
+        '''
         result = subprocess.run(
-            [
-                self.vmrun_path,
-                "-T", "ws",
-                "list",
-            ],
+            [self.vmrun_path, "-T", "ws", "list"],
             capture_output=True,
             text=True,
         )
@@ -218,18 +203,11 @@ class VMwareRunner:
         return self.vmx_path in result.stdout
 
     def stop(self, soft: bool = True) -> None:
-        """
+        '''
         Stop the VM if it is currently running.
-        """
+        '''
         if not self.is_running():
             return
 
         mode = "soft" if soft else "hard"
-
-        self._run([
-            "stop",
-            self.vmx_path,
-            mode,
-        ])
-
-
+        self._run(["stop", self.vmx_path, mode])

@@ -13,6 +13,7 @@ from runners.ubuntu import UbuntuRunner
 
 from workflows.static_analysis import StaticAnalysisWorkflow
 from workflows.dynamic_analysis import DynamicAnalysisWorkflow
+from workflows.payload_recovery.payload_recovery import PayloadRecoveryWorkflow
 
 
 class AnalysisController:
@@ -25,6 +26,7 @@ class AnalysisController:
         windows_dispatch: WindowsDispatchRunner | None = None,
         ubuntu_runner: UbuntuRunner | None = None,
         dynamic_analysis_workflow: DynamicAnalysisWorkflow | None = None,
+        payload_recovery_workflow: PayloadRecoveryWorkflow | None = None,
     ):
         self.minio_dispatch = minio_dispatch
         self.remnux_dispatch = remnux_dispatch
@@ -34,6 +36,7 @@ class AnalysisController:
         self.static_analysis_workflow = static_analysis_workflow
         self.detection_workflow = detection_workflow
         self.dynamic_analysis_workflow = dynamic_analysis_workflow
+        self.payload_recovery_workflow = payload_recovery_workflow
 
     # --------------------------------------------------
     # Download malware sample from Debian MinIO server to 
@@ -266,3 +269,83 @@ class AnalysisController:
             raise RuntimeError(
                 "Dynamic analysis workflow has not been configured"
             )
+
+    # -------------------------------------------------------
+    # Invoke payload recovery for packed or encrypted samples.
+    # -------------------------------------------------------
+    def run_payload_recovery(
+        self,
+        state: AnalysisState,
+        repository_root: Path,
+        host_archive_path: Path,
+        guest_archive_path: PureWindowsPath,
+        guest_code_dir: PureWindowsPath,
+        guest_output_dir: PureWindowsPath,
+        host_result_path: Path,
+        cdb_path: PureWindowsPath,
+    ) -> AnalysisState:
+        '''
+        Execute deterministic payload recovery after dynamic artifact collection
+        and upload have completed.
+
+        Recovery uses the policy previously selected by AnalysisController.
+
+        The recovered executable remains inside the Windows analysis VM.
+        '''
+
+        if not state.recovery_required:
+            print("[recovery] Payload recovery not required")
+            return state
+
+        if self.payload_recovery_workflow is None:
+            raise RuntimeError("Payload recovery workflow has not been configured")
+
+        if state.recovery_policy not in ("AUTOMATED_UNPACKING", "AUTOMATED_DECRYPTION"):
+            raise ValueError(f"Unsupported recovery policy: {state.recovery_policy}")
+
+        if state.windows_sample_path is None:
+            raise RuntimeError("Windows sample path is not available")
+
+        if not state.dynamic_sample_downloaded or not state.dynamic_sha256_verified:
+            raise RuntimeError("Windows sample preparation has not completed")
+
+        if not state.sample_executed:
+            raise RuntimeError("Controlled execution has not completed")
+
+        if not all((
+            state.inetsim_upload_complete,
+            state.wireshark_upload_complete,
+            state.noriben_upload_complete,
+            state.regshot_upload_complete,
+            state.sysmon_upload_complete,
+        )):
+            raise RuntimeError("Dynamic artifact uploads have not completed")
+
+        state.recovery_attempted = True
+        state.recovery_successful = False
+
+        result = self.payload_recovery_workflow.run(
+            recovery_method=state.recovery_policy,
+            protected_sha256=state.sha256,
+            guest_sample_path=state.windows_sample_path,
+            repository_root=repository_root,
+            host_archive_path=host_archive_path,
+            guest_archive_path=guest_archive_path,
+            guest_code_dir=guest_code_dir,
+            guest_output_dir=guest_output_dir,
+            host_result_path=host_result_path,
+            cdb_path=cdb_path,
+        )
+
+        state.recovery_successful = result.recovery_successful
+        state.recovered_sha256 = result.recovered_sha256
+        state.recovered_windows_path = result.recovered_path
+
+        print(f"[recovery] Method: {result.recovery_method}")
+        print(f"[recovery] Recovered SHA-256: {result.recovered_sha256}")
+        print(f"[recovery] Recovered executable: {result.recovered_path}")
+        print(f"[recovery] OEP RVA: 0x{result.oep_rva:X}")
+        print(f"[recovery] IAT RVA: 0x{result.iat_rva:X}")
+        print("[recovery] Payload recovery completed successfully")
+
+        return state

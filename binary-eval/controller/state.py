@@ -100,8 +100,8 @@ class AnalysisState:
 
     # Recovered payload info
     recovered_sha256: str | None = None
+    recovered_windows_path: PureWindowsPath | None = None
     recovered_sample_path: PurePosixPath | None = None
-    recovered_static_dir: PurePosixPath | None = None
 
 
 

@@ -1,0 +1,13 @@
+{
+    "recovery_method": "AUTOMATED_UNPACKING",
+    "protected_sha256": "5504be1a85ce1189a9398a728bf7b8897e7264cbd12b0a3d7a1502a10b3c35e5",
+    "recovered_sha256": "4a11a82215a227c7bed9b0be9de30ad43d6731144b68f0c0548ee7d222ec847c",
+    "protected_path": "C:\\analysis\\ransomware_packed.exe",
+    "recovered_path": "C:\\analysis\\recovery\\recovered.bin",
+    "oep_rva": "0x3998",
+    "iat_rva": "0x1BFF8",
+    "iat_size": "0x3E8",
+    "iat_valid_thunks": 109,
+    "iat_invalid_thunks": 7,
+    "recovery_successful": true
+}

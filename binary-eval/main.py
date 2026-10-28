@@ -24,6 +24,8 @@ from runners.minio_dynamic import MinioDynamicRunner
 from workflows.static_analysis import StaticAnalysisWorkflow
 from workflows.detection import DetectionWorkflow
 from workflows.dynamic_analysis import DynamicAnalysisWorkflow
+from runners.recovery_dispatch import RecoveryDispatchRunner
+from workflows.payload_recovery.payload_recovery import PayloadRecoveryWorkflow
 
 
 '''
@@ -180,6 +182,11 @@ try:
 
     sysmon_runner = SysmonRunner(windows_vm=windows_vm)
 
+    recovery_dispatch = RecoveryDispatchRunner(
+        windows_vm=windows_vm,
+        python_path=PureWindowsPath(r"C:\Users\misha.kurtz\AppData\Local\Python\bin\python.exe"),
+    )
+
     # --------------------------------------------------
     # Instantiate MinIO dynamic upload runners
     # --------------------------------------------------
@@ -232,6 +239,10 @@ try:
         noriben_completion_timeout=300,
     )
 
+    payload_recovery_workflow = PayloadRecoveryWorkflow(
+        recovery_dispatch=recovery_dispatch,
+    )
+
     # --------------------------------------------------
     # Instantiate controller
     # --------------------------------------------------
@@ -243,6 +254,7 @@ try:
         static_analysis_workflow=static_analysis_workflow,
         detection_workflow=detection_workflow,
         dynamic_analysis_workflow=dynamic_analysis_workflow,
+        payload_recovery_workflow=payload_recovery_workflow,
     )
 
     print("=== Selected Sample ===")
@@ -304,6 +316,35 @@ try:
     state = controller.run_dynamic_analysis(
         state,
         execution_seconds=60,
+    )
+
+    print()
+    print("=== Starting Payload Recovery ===")
+
+    recovery_output_dir = PureWindowsPath(
+        rf"C:\binary-eval\work\{state.sample_id}"
+        rf"\{state.sample_variant}\{state.sha256}"
+        rf"\recovery"
+    )
+
+    host_recovery_dir = (
+        Path(__file__).resolve().parent
+        / "test_artifacts"
+        / "payload_recovery"
+        / state.sample_id
+        / state.sample_variant
+        / state.sha256
+    )
+
+    state = controller.run_payload_recovery(
+        state=state,
+        repository_root=Path(__file__).resolve().parent,
+        host_archive_path=host_recovery_dir / "recovery.zip",
+        guest_archive_path=PureWindowsPath(r"C:\binary-eval\recovery_code.zip"),
+        guest_code_dir=PureWindowsPath(r"C:\binary-eval\recovery_code"),
+        guest_output_dir=recovery_output_dir,
+        host_result_path=host_recovery_dir / "recovery_result.json",
+        cdb_path=PureWindowsPath(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"),
     )
 
     
@@ -371,6 +412,15 @@ try:
     print(f"noriben_upload_complete: {state.noriben_upload_complete}")
     print(f"regshot_upload_complete: {state.regshot_upload_complete}")
     print(f"sysmon_upload_complete: {state.sysmon_upload_complete}")
+
+    print()
+    print("=== Payload Recovery ===")
+    print(f"recovery_policy: {state.recovery_policy}")
+    print(f"recovery_required: {state.recovery_required}")
+    print(f"recovery_attempted: {state.recovery_attempted}")
+    print(f"recovery_successful: {state.recovery_successful}")
+    print(f"recovered_sha256: {state.recovered_sha256}")
+    print(f"recovered_windows_path: {state.recovered_windows_path}")
 
 finally:
     if not windows_was_running:
