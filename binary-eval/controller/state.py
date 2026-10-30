@@ -28,7 +28,7 @@ class AnalysisState:
     sample_downloaded: bool = False
     sha256_verified: bool = False
 
-    # Static
+    # Static analysis status 
     pe_analysis_complete: bool = False
     pe_upload_complete: bool = False
     floss_analysis_complete: bool = False
@@ -87,7 +87,7 @@ class AnalysisState:
     dynamic_sha256_verified: bool = False
     sample_executed: bool = False
 
-    # Upload status
+    # Dynamic artifact upload status
     inetsim_upload_complete: bool = False
     wireshark_upload_complete: bool = False
     noriben_upload_complete: bool = False
@@ -102,6 +102,9 @@ class AnalysisState:
     recovered_sha256: str | None = None
     recovered_windows_path: PureWindowsPath | None = None
     recovered_sample_path: PurePosixPath | None = None
+
+    # Recovered payload upload status
+    recovered_upload_complete: bool = False
 
 
 

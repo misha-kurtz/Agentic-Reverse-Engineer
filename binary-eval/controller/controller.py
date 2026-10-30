@@ -89,7 +89,7 @@ class AnalysisController:
 
         # Generate presigned URL for sample download from MinIO S3 bucket
         state.presigned_url = (
-            self.minio_dispatch.generate_presigned_url(
+            self.minio_dispatch.generate_presigned_url_get(
                 sample_id=state.sample_id,
                 sha256=state.sha256,
                 sample_variant=state.sample_variant,
@@ -175,14 +175,11 @@ class AnalysisController:
     def prepare_dynamic_sample(
         self,
         state: AnalysisState,
+        host_temp_url_path: Path,
     ) -> AnalysisState:
 
         self._require_dynamic_dependencies()
 
-        if state.presigned_url is None:
-            raise RuntimeError(
-                "Presigned sample URL is not available"
-            )
 
         state.windows_sample_path = PureWindowsPath(
             rf"C:\binary-eval\work\{state.sample_id}"
@@ -224,6 +221,14 @@ class AnalysisController:
                 sample_variant=state.sample_variant,
                 sha256=state.sha256,
             )
+        )
+
+        # Generate a new presigned GET URL for the Windows VM
+        state.presigned_url = self.minio_dispatch.generate_presigned_url_get(
+            sample_id=state.sample_id,
+            sha256=state.sha256,
+            sample_variant=state.sample_variant,
+            host_temp_path=host_temp_url_path,
         )
 
         # Download sample to Windows
@@ -283,6 +288,7 @@ class AnalysisController:
         guest_output_dir: PureWindowsPath,
         host_result_path: Path,
         cdb_path: PureWindowsPath,
+        host_temp_url_path: Path,
     ) -> AnalysisState:
         '''
         Execute deterministic payload recovery after dynamic artifact collection
@@ -300,7 +306,12 @@ class AnalysisController:
         if self.payload_recovery_workflow is None:
             raise RuntimeError("Payload recovery workflow has not been configured")
 
-        if state.recovery_policy not in ("AUTOMATED_UNPACKING", "AUTOMATED_DECRYPTION"):
+        if state.recovery_policy is None:
+            raise RuntimeError("Recovery policy has not been selected")
+
+        recovery_method = state.recovery_policy.upper()
+
+        if recovery_method not in ("AUTOMATED_UNPACKING", "AUTOMATED_DECRYPTION"):
             raise ValueError(f"Unsupported recovery policy: {state.recovery_policy}")
 
         if state.windows_sample_path is None:
@@ -325,7 +336,7 @@ class AnalysisController:
         state.recovery_successful = False
 
         result = self.payload_recovery_workflow.run(
-            recovery_method=state.recovery_policy,
+            recovery_method=recovery_method,
             protected_sha256=state.sha256,
             guest_sample_path=state.windows_sample_path,
             repository_root=repository_root,
@@ -335,11 +346,15 @@ class AnalysisController:
             guest_output_dir=guest_output_dir,
             host_result_path=host_result_path,
             cdb_path=cdb_path,
+            sample_id=state.sample_id,
+            sample_variant=state.sample_variant,
+            host_temp_url_path=host_temp_url_path,
         )
 
         state.recovery_successful = result.recovery_successful
         state.recovered_sha256 = result.recovered_sha256
         state.recovered_windows_path = result.recovered_path
+        state.recovered_upload_complete = result.recovered_upload_complete
 
         print(f"[recovery] Method: {result.recovery_method}")
         print(f"[recovery] Recovered SHA-256: {result.recovered_sha256}")

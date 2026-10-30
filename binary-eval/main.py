@@ -28,6 +28,15 @@ from runners.recovery_dispatch import RecoveryDispatchRunner
 from workflows.payload_recovery.payload_recovery import PayloadRecoveryWorkflow
 
 
+
+SAMPLE_ID = "B002"
+
+SAMPLES = {
+    "original": "d97fd021479dbaee852594aef955610cbe6ae66e4c92ba851d48f8353c37d03e",
+    "packed": "5504be1a85ce1189a9398a728bf7b8897e7264cbd12b0a3d7a1502a10b3c35e5",
+    "encrypted": "1f8ed941fdadb69d98678f2933a22cb090366faea0ac9d3502d3859e150afd40",
+}
+
 '''
 SAMPLE_ID = "B001"
 
@@ -37,14 +46,6 @@ SAMPLES = {
     "encrypted": "c1d38e72ae55dc9232c962df041ef5371bf53cce1696867360ebcacd2d914109",
 }
 '''
-
-SAMPLE_ID = "B002"
-
-SAMPLES = {
-    "original": "d97fd021479dbaee852594aef955610cbe6ae66e4c92ba851d48f8353c37d03e",
-    "packed": "5504be1a85ce1189a9398a728bf7b8897e7264cbd12b0a3d7a1502a10b3c35e5",
-    "encrypted": "1f8ed941fdadb69d98678f2933a22cb090366faea0ac9d3502d3859e150afd40",
-}
 
 # --------------------------------------------------
 # Resolve sample variant
@@ -241,6 +242,8 @@ try:
 
     payload_recovery_workflow = PayloadRecoveryWorkflow(
         recovery_dispatch=recovery_dispatch,
+        minio_dispatch=minio_dispatch,
+        windows_dispatch=windows_dispatch,
     )
 
     # --------------------------------------------------
@@ -311,7 +314,10 @@ try:
 
     print("Dynamic analysis VMs are ready.")
 
-    state = controller.prepare_dynamic_sample(state)
+    state = controller.prepare_dynamic_sample(
+        state=state,
+        host_temp_url_path=Path(r"C:\Users\MK\AppData\Local\Temp\presigned_url.txt"),
+    )
 
     state = controller.run_dynamic_analysis(
         state,
@@ -345,6 +351,7 @@ try:
         guest_output_dir=recovery_output_dir,
         host_result_path=host_recovery_dir / "recovery_result.json",
         cdb_path=PureWindowsPath(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"),
+        host_temp_url_path=Path(r"C:\Users\MK\AppData\Local\Temp\presigned_put_url.txt"),
     )
 
     
@@ -421,6 +428,7 @@ try:
     print(f"recovery_successful: {state.recovery_successful}")
     print(f"recovered_sha256: {state.recovered_sha256}")
     print(f"recovered_windows_path: {state.recovered_windows_path}")
+    print(f"recovered_upload_complete: {state.recovered_upload_complete}")
 
 finally:
     if not windows_was_running:

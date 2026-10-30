@@ -6,6 +6,8 @@ from pathlib import Path, PureWindowsPath
 import json
 
 from runners.recovery_dispatch import RecoveryDispatchRunner
+from runners.minio_dispatch import MinioDispatchRunner
+from runners.windows_dispatch import WindowsDispatchRunner
 
 '''
 Uniform Interface for Deterministic Payload Recovery Workflows
@@ -41,11 +43,19 @@ class PayloadRecoveryResult:
     iat_invalid_thunks: int
 
     recovery_successful: bool
+    recovered_upload_complete: bool
 
 
 class PayloadRecoveryWorkflow:
-    def __init__(self, recovery_dispatch: RecoveryDispatchRunner):
+    def __init__(
+        self,
+        recovery_dispatch: RecoveryDispatchRunner,
+        minio_dispatch: MinioDispatchRunner,
+        windows_dispatch: WindowsDispatchRunner,
+    ):
         self.recovery_dispatch = recovery_dispatch
+        self.minio_dispatch = minio_dispatch
+        self.windows_dispatch = windows_dispatch
 
     def run(
         self,
@@ -59,6 +69,9 @@ class PayloadRecoveryWorkflow:
         guest_output_dir: PureWindowsPath,
         host_result_path: Path,
         cdb_path: PureWindowsPath,
+        sample_id: str,
+        sample_variant: str,
+        host_temp_url_path: Path,
     ) -> PayloadRecoveryResult:
         '''
         Coordinate deterministic payload recovery using the controller-selected method.
@@ -106,6 +119,30 @@ class PayloadRecoveryWorkflow:
         if PureWindowsPath(result_data["protected_path"]) != guest_sample_path:
             raise ValueError("Protected executable path mismatch in recovery results")
 
+        # --------------------------------------------------
+        # Upload recovered payload to MinIO
+        # --------------------------------------------------
+
+        recovered_path = PureWindowsPath(result_data["recovered_path"])
+        recovered_sha256 = result_data["recovered_sha256"]
+
+        # Generate a fresh presigned PUT URL
+        presigned_put_url = self.minio_dispatch.generate_presigned_url_put(
+            sample_id=sample_id,
+            recovered_sha256=recovered_sha256,
+            sample_variant=sample_variant,
+            host_temp_path=host_temp_url_path,
+        )
+
+        # Verify recovered executable and upload to MinIO
+        self.windows_dispatch.verify_and_upload(
+            presigned_url=presigned_put_url,
+            expected_sha256=recovered_sha256,
+            guest_recovered_path=recovered_path,
+        )
+
+        print("[recovery] Recovered payload uploaded successfully")
+
         # Normalize the recovery metadata.
         return PayloadRecoveryResult(
             recovery_method=result_data["recovery_method"],
@@ -119,4 +156,5 @@ class PayloadRecoveryWorkflow:
             iat_valid_thunks=result_data["iat_valid_thunks"],
             iat_invalid_thunks=result_data["iat_invalid_thunks"],
             recovery_successful=result_data["recovery_successful"],
+            recovered_upload_complete=True,
         )
